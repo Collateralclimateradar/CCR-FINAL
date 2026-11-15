@@ -7,3 +7,4 @@ This folder will contain:
 - Database integration
 - Collateral data management
 - Climate risk calculations
+Automated tests run on GitHub Actions.
