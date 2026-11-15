@@ -1,55 +1,43 @@
-# CCR Backend
+# Collateral Climate Radar (CCR) — Demo
 
-Backend services for Climate Guard AI.
+**Making Climate Risk Visible Across Real Estate Collateral.**
 
-**Status: Phase 1 (foundation).** The backend starts, connects to a PostgreSQL/PostGIS
-database, and reports its health. No climate-risk features exist yet.
+## Open it
 
-## What exists
+Open `index.html` in any modern browser. No server, build step, or API key is needed. The whole demo works offline.
 
-- `GET /api/v1/health` - reports app status and checks the database for real.
-  Returns HTTP 200 when healthy and HTTP 503 when the database is unreachable.
-- Settings read from environment variables (no passwords in code).
-- Database connection (SQLAlchemy) and migration setup (Alembic, no tables yet).
-- Docker and Docker Compose files (API + PostGIS database).
-- Automated tests that do not need a real database.
+## What is in the app
 
-## Run with Docker
+- **Executive Overview:** five headline metrics, risk distribution, assessment coverage, exposure by emirate, and three findings computed from the data.
+- **Climate Risk Map:** a schematic coordinate map with one marker per collateral asset, coloured by risk, unknown, or not assessed. Click a marker to see its property card. Overlapping markers are listed for selection.
+- **Collateral Portfolio:** search, emirate and risk filters, paging, a record panel with all 47 source fields, and CSV export (filtered or full).
+- **Flood Scenario:** five-level rainfall slider. Exposed count, exposed value, associated loans, and change against the Moderate baseline update live.
+- **Risk Analysis:** top assessed risks, a "needs attention" ranking, highest flood, heat, and loan exposure, emirate and category concentration, and data gaps.
+- **CCR Intelligence:** a local rule-based assistant in English and Arabic. It answers from the live dataset and says plainly when a question is outside the data.
+- **Methodology & Data:** sources, formulas, limitations, CBUAE tiers, NGFS tags, and the regulatory statement.
+- **Audit Trail:** the actions performed in your session.
+- **Generate Executive Report:** downloads a PNG in Arabic or English with current values. The assistant can also trigger it ("generate a report" / "اعمل لي تقرير").
 
-1. Copy `.env.example` to `.env` and set a strong `POSTGRES_PASSWORD`
-   (use the same password inside `DATABASE_URL`).
-2. From this folder: `docker compose up --build`
-3. Open http://localhost:8000/api/v1/health
-4. Interactive API docs (development only): http://localhost:8000/docs
+Arabic is the default (right-to-left). Light and dark modes can be switched. A "Real Estate & Land Only" toggle is available.
 
-## Run the tests
+## Data
 
-```
-pip install -r requirements-dev.txt
-pytest
-```
+- The app uses the 1,000 synthetic records from the supplied workbook (Main_Data). No records were generated, resampled, or changed.
+- Hazard data is attributed to ThinkHazard! — World Bank GFDRR (thinkhazard.org).
+- Source tier labels are shown for reference only. They do not match the cutoffs in the workbook's Data_Explanation sheet, and the app discloses this.
 
-## Folder layout
+## Key rules
 
-```
-backend/
-  ccr/
-    main.py          application entry point
-    core/            settings and logging
-    db/              database connection and base class for tables
-    api/v1/          version 1 of the API (health check so far)
-  migrations/        database migrations (Alembic)
-  tests/             automated tests
-```
+- Flood score = 10 × flood intensity × elevation × coast × protection, capped at 100. Heat score = 10 × extreme heat × material, capped at 100.
+- Scenario exposure = scenario flood score ≥ 65. Multipliers are 0.60, 0.80, 1.00, 1.20, 1.40.
+- Overall risk = 10 × composite hazard score. Demo thresholds: 35–64 Medium, 65–100 High. These are CCR demo thresholds, not regulatory thresholds.
+- Implied valuation = exposure ÷ loan-to-value ratio (derived, not an appraisal).
+- Expected climate loss is the source-modelled figure. It is shown separately and never added to exposed value.
 
-## Rules for this project
+## Not included
 
-- Synthetic data must always be labeled as synthetic.
-- Exposed collateral value is not the same as financial loss.
-- No regulatory compliance claim is made until the official requirements are verified.
+- Satellite imagery. The map is a coordinate plot.
+- CSV import, record editing, and Presenter Mode.
+- Marker clustering. Overlapping markers are listed on click.
 
-## Roadmap
-
-Phase 2 banking data, Phase 3 geospatial, Phase 4 climate risk engine,
-Phase 5 financial exposure, Phase 6 security, Phase 7 frontend integration,
-Phase 8 testing and deployment.
+All figures are synthetic. Demo environment only. Confidential — Hackathon Use.
