@@ -1,43 +1,63 @@
-name: Backend Tests
+name: Backend tests
 
 on:
   push:
-    branches:
-      - ccr-saas-developmenT
-  pull_request:
-    branches:
-      - ccr-saas-developmenT
+    branches: [ccr-saas-developmenT]
   workflow_dispatch:
+
+permissions:
+  contents: read
 
 jobs:
   test:
     runs-on: ubuntu-latest
-
+    defaults:
+      run:
+        working-directory: backend
+    services:
+      postgres:
+        image: postgis/postgis:16-3.4
+        env:
+          POSTGRES_USER: ci_user
+          POSTGRES_PASSWORD: ci_only_password
+          POSTGRES_DB: ci_db
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U ci_user -d ci_db"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      CI_DATABASE_URL: postgresql+psycopg://ci_user:ci_only_password@localhost:5432/ci_db
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
 
       - name: Install dependencies
-        run: |
-          python -m pip install --upgrade pip
-          if [ -f backend/requirements-dev.txt ]; then
-            pip install -r backend/requirements-dev.txt
-          elif [ -f backend/requirements.txt ]; then
-            pip install -r backend/requirements.txt
-          fi
-          pip install pytest httpx
+        run: pip install -r requirements-dev.txt
 
-      - name: Run backend tests
-        working-directory: backend
+      - name: Run tests
+        run: pytest -v
+
+      - name: Migrate real PostgreSQL
+        env:
+          DATABASE_URL: ${{ env.CI_DATABASE_URL }}
+        run: alembic upgrade head
+
+      - name: Health check against real PostgreSQL
+        env:
+          DATABASE_URL: ${{ env.CI_DATABASE_URL }}
         run: |
-          if [ -d tests ]; then
-            pytest -v
-          else
-            echo "No backend tests folder found."
-            exit 1
-          fi
+          uvicorn ccr.main:app --port 8000 &
+          sleep 5
+          curl -sf http://localhost:8000/api/v1/health | tee health.json
+          grep -q '"status":"healthy"' health.json
+
+      - name: Undo migration on real PostgreSQL
+        env:
+          DATABASE_URL: ${{ env.CI_DATABASE_URL }}
+        run: alembic downgrade base
