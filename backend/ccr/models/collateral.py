@@ -1,3 +1,4 @@
+
 """A real estate asset that secures a loan. Always owned by one organization."""
 import uuid
 from decimal import Decimal
@@ -30,6 +31,7 @@ class Collateral(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     organization_id: Mapped[uuid.UUID] = mapped_column(
         Uuid, ForeignKey("organizations.id", ondelete="RESTRICT"), index=True, nullable=False
     )
+
     # The bank's own reference for this asset.
     external_ref: Mapped[str] = mapped_column(String(100), nullable=False)
     property_type: Mapped[str] = mapped_column(String(50), nullable=False)
@@ -43,6 +45,15 @@ class Collateral(UUIDPrimaryKeyMixin, TimestampMixin, Base):
 
     # No default on purpose: whoever creates a record must say if it is synthetic.
     is_synthetic: Mapped[bool] = mapped_column(Boolean, nullable=False)
+
+    # Archived records remain in the database to preserve financial history.
+    is_archived: Mapped[bool] = mapped_column(
+        Boolean,
+        nullable=False,
+        default=False,
+        server_default="false",
+        index=True,
+    )
 
     valuations: Mapped[list["Valuation"]] = relationship(back_populates="collateral")
 
