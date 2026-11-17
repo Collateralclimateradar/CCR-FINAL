@@ -5,12 +5,15 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 
-from ccr.api.v1 import api_router
+from ccr.api.v1 import api_router, dev_router
 from ccr.core.config import get_settings
 from ccr.core.logging import configure_logging
 from ccr.db.session import dispose_engine
 
 logger = logging.getLogger(__name__)
+
+# Environments where the login-free development routes may be switched on.
+DEV_ENVIRONMENTS = {"development", "test"}
 
 
 @asynccontextmanager
@@ -30,7 +33,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 def create_app() -> FastAPI:
     settings = get_settings()
     configure_logging(settings.log_level)
-    is_production = settings.environment.lower() == "production"
+    environment = settings.environment.lower()
+    is_production = environment == "production"
     app = FastAPI(
         title=settings.app_name,
         version=settings.app_version,
@@ -41,6 +45,11 @@ def create_app() -> FastAPI:
         lifespan=lifespan,
     )
     app.include_router(api_router, prefix="/api/v1")
+    if environment in DEV_ENVIRONMENTS:
+        logger.warning(
+            "Development routes are ON (no login yet). Never expose this to the internet."
+        )
+        app.include_router(dev_router, prefix="/api/v1")
     return app
 
 
