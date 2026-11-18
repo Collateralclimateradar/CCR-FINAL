@@ -1,5 +1,6 @@
-
 """API integration tests for executing collateral CSV imports."""
+
+import uuid
 
 import pytest
 from fastapi.testclient import TestClient
@@ -73,8 +74,9 @@ def collateral_count(engine, organization_id=None):
         stmt = select(func.count()).select_from(Collateral)
 
         if organization_id is not None:
+            organization_uuid = uuid.UUID(str(organization_id))
             stmt = stmt.where(
-                Collateral.organization_id == organization_id
+                Collateral.organization_id == organization_uuid
             )
 
         return session.scalar(stmt)
