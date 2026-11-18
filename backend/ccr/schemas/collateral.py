@@ -1,8 +1,8 @@
 
 """Data shapes for collaterals.
 
-The organization is never accepted from the client body: it always comes
-from the URL, so a client cannot write into another bank's data.
+The organization is never accepted from the client body.
+It is determined by the organization in the URL.
 """
 import uuid
 from datetime import datetime
@@ -16,6 +16,7 @@ from pydantic import (
     StringConstraints,
     model_validator,
 )
+
 
 Ref = Annotated[
     str,
@@ -59,16 +60,46 @@ class CollateralCreate(BaseModel):
         decimal_places=6,
     )
 
-    # Required: the sender must identify synthetic records.
     is_synthetic: bool
 
     @model_validator(mode="after")
-    def _coordinates_together(self):
+    def coordinates_together(self):
         if (self.latitude is None) != (self.longitude is None):
             raise ValueError(
                 "latitude and longitude must be provided together"
             )
         return self
+
+
+class CollateralUpdate(BaseModel):
+    """Fields that may be changed through a partial update."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    external_ref: Ref | None = None
+    property_type: PropertyType | None = None
+    description: str | None = None
+    country_code: str | None = Field(default=None, pattern=r"^[A-Z]{2}$")
+    region: Place | None = None
+    city: Place | None = None
+
+    latitude: Decimal | None = Field(
+        default=None,
+        ge=-90,
+        le=90,
+        max_digits=9,
+        decimal_places=6,
+    )
+
+    longitude: Decimal | None = Field(
+        default=None,
+        ge=-180,
+        le=180,
+        max_digits=9,
+        decimal_places=6,
+    )
+
+    is_synthetic: bool | None = None
 
 
 class CollateralRead(BaseModel):
