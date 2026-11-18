@@ -1,320 +1,291 @@
 
-"""Tests for transactional collateral CSV import execution."""
+"""API integration tests for executing collateral CSV imports."""
+
+import uuid
 
 import pytest
+from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, func, select
-from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from sqlalchemy.pool import StaticPool
 
+import ccr.models  # noqa: F401
 from ccr.db.base import Base
-from ccr.models import Collateral, Organization
-from ccr.services.collateral_import import validate_collateral_csv
-from ccr.services.collateral_import_execution import (
-    CollateralImportConflict,
-    execute_collateral_import,
-)
+from ccr.db.session import get_db
+from ccr.main import app
+from ccr.models import Collateral
 
 
 @pytest.fixture
-def db_session():
+def import_api_client():
     engine = create_engine(
         "sqlite://",
         connect_args={"check_same_thread": False},
         poolclass=StaticPool,
     )
-
     Base.metadata.create_all(engine)
 
+    def override_get_db():
+        with Session(engine) as session:
+            yield session
+
+    app.dependency_overrides[get_db] = override_get_db
+
+    try:
+        with TestClient(app) as client:
+            yield client, engine
+    finally:
+        app.dependency_overrides.clear()
+        engine.dispose()
+
+
+def create_organization(client, name="Import Test Bank"):
+    response = client.post(
+        "/api/v1/organizations",
+        json={"name": name},
+    )
+    assert response.status_code == 201, response.text
+    return response.json()["id"]
+
+
+def import_url(organization_id):
+    return (
+        f"/api/v1/organizations/{organization_id}"
+        "/collaterals/import"
+    )
+
+
+def upload_csv(client, organization_id, content):
+    return client.post(
+        import_url(organization_id),
+        files={
+            "file": (
+                "collaterals.csv",
+                content,
+                "text/csv",
+            )
+        },
+    )
+
+
+def collateral_count(engine, organization_id=None):
     with Session(engine) as session:
-        yield session
+        stmt = select(func.count()).select_from(Collateral)
 
-    engine.dispose()
+        if organization_id is not None:
+            organization_uuid = uuid.UUID(str(organization_id))
+            stmt = stmt.where(
+                Collateral.organization_id == organization_uuid
+            )
 
-
-def create_organization(db, name):
-    organization = Organization(name=name)
-    db.add(organization)
-    db.commit()
-    db.refresh(organization)
-    return organization
+        return session.scalar(stmt)
 
 
-def make_validation(csv_content):
-    return validate_collateral_csv(
-        csv_content.encode("utf-8")
+def test_import_valid_csv_persists_records(import_api_client):
+    client, engine = import_api_client
+    organization_id = create_organization(client)
+
+    csv_content = (
+        b"external_ref,property_type,is_synthetic\n"
+        b"C-001,villa,true\n"
+        b"C-002,apartment,false\n"
     )
 
+    response = upload_csv(client, organization_id, csv_content)
 
-def collateral_count(db, organization_id):
-    return db.scalar(
-        select(func.count())
-        .select_from(Collateral)
-        .where(
-            Collateral.organization_id == organization_id
-        )
+    assert response.status_code == 200, response.text
+
+    data = response.json()
+
+    assert data["total_rows"] == 2
+    assert data["imported_rows"] == 2
+    assert data["skipped_rows"] == 0
+    assert data["failed_rows"] == 0
+    assert collateral_count(engine, organization_id) == 2
+
+
+def test_import_skips_invalid_rows_and_imports_valid_rows(
+    import_api_client,
+):
+    client, engine = import_api_client
+    organization_id = create_organization(client)
+
+    csv_content = (
+        b"external_ref,property_type,is_synthetic\n"
+        b"C-001,villa,true\n"
+        b",apartment,true\n"
     )
 
+    response = upload_csv(client, organization_id, csv_content)
 
-def test_import_saves_valid_records(db_session):
-    organization = create_organization(
-        db_session,
-        "Bank A",
+    assert response.status_code == 200, response.text
+
+    data = response.json()
+
+    assert data["total_rows"] == 2
+    assert data["imported_rows"] == 1
+    assert data["skipped_rows"] == 1
+    assert data["failed_rows"] == 0
+    assert collateral_count(engine, organization_id) == 1
+
+
+def test_import_skips_existing_external_reference(import_api_client):
+    client, engine = import_api_client
+    organization_id = create_organization(client)
+
+    first_csv = (
+        b"external_ref,property_type,is_synthetic\n"
+        b"C-001,villa,true\n"
     )
 
-    result = make_validation(
-        "external_ref,property_type,is_synthetic\n"
-        "C-001,villa,true\n"
-        "C-002,apartment,false\n"
+    first_response = upload_csv(
+        client,
+        organization_id,
+        first_csv,
+    )
+    assert first_response.status_code == 200, first_response.text
+    assert first_response.json()["imported_rows"] == 1
+
+    second_csv = (
+        b"external_ref,property_type,is_synthetic\n"
+        b"C-001,apartment,true\n"
+        b"C-002,villa,false\n"
     )
 
-    report = execute_collateral_import(
-        db_session,
-        organization.id,
-        result,
+    second_response = upload_csv(
+        client,
+        organization_id,
+        second_csv,
     )
 
-    assert report.total_rows == 2
-    assert report.imported_rows == 2
-    assert report.skipped_rows == 0
-    assert report.failed_rows == 0
+    assert second_response.status_code == 200, second_response.text
 
-    assert collateral_count(
-        db_session,
-        organization.id,
-    ) == 2
+    data = second_response.json()
 
-
-def test_invalid_rows_are_skipped(db_session):
-    organization = create_organization(
-        db_session,
-        "Bank B",
-    )
-
-    result = make_validation(
-        "external_ref,property_type,is_synthetic\n"
-        "C-001,villa,true\n"
-        "C-002,,true\n"
-    )
-
-    report = execute_collateral_import(
-        db_session,
-        organization.id,
-        result,
-    )
-
-    assert report.total_rows == 2
-    assert report.imported_rows == 1
-    assert report.skipped_rows == 1
-    assert report.failed_rows == 0
-
-    assert collateral_count(
-        db_session,
-        organization.id,
-    ) == 1
-
-
-def test_existing_reference_is_skipped(db_session):
-    organization = create_organization(
-        db_session,
-        "Bank C",
-    )
-
-    db_session.add(
-        Collateral(
-            organization_id=organization.id,
-            external_ref="C-001",
-            property_type="villa",
-            is_synthetic=True,
-        )
-    )
-    db_session.commit()
-
-    result = make_validation(
-        "external_ref,property_type,is_synthetic\n"
-        "C-001,apartment,true\n"
-        "C-002,villa,true\n"
-    )
-
-    report = execute_collateral_import(
-        db_session,
-        organization.id,
-        result,
-    )
-
-    assert report.total_rows == 2
-    assert report.imported_rows == 1
-    assert report.skipped_rows == 1
-    assert report.failed_rows == 0
-
-    assert collateral_count(
-        db_session,
-        organization.id,
-    ) == 2
-
+    assert data["total_rows"] == 2
+    assert data["imported_rows"] == 1
+    assert data["skipped_rows"] == 1
     assert any(
-        issue.code == "EXTERNAL_REF_ALREADY_EXISTS"
-        for issue in report.issues
+        issue["code"] == "EXTERNAL_REF_ALREADY_EXISTS"
+        for issue in data["issues"]
     )
+    assert collateral_count(engine, organization_id) == 2
 
 
-def test_same_reference_in_another_organization_is_allowed(
-    db_session,
+def test_import_duplicate_references_in_csv_are_skipped(
+    import_api_client,
 ):
-    organization_a = create_organization(
-        db_session,
-        "Bank D",
+    client, engine = import_api_client
+    organization_id = create_organization(client)
+
+    csv_content = (
+        b"external_ref,property_type,is_synthetic\n"
+        b"C-001,villa,true\n"
+        b"C-001,apartment,true\n"
+        b"C-002,villa,false\n"
     )
 
-    organization_b = create_organization(
-        db_session,
-        "Bank E",
-    )
+    response = upload_csv(client, organization_id, csv_content)
 
-    db_session.add(
-        Collateral(
-            organization_id=organization_a.id,
-            external_ref="SHARED-001",
-            property_type="villa",
-            is_synthetic=True,
-        )
-    )
-    db_session.commit()
+    assert response.status_code == 200, response.text
 
-    result = make_validation(
-        "external_ref,property_type,is_synthetic\n"
-        "SHARED-001,apartment,true\n"
-    )
+    data = response.json()
 
-    report = execute_collateral_import(
-        db_session,
-        organization_b.id,
-        result,
-    )
-
-    assert report.imported_rows == 1
-    assert report.skipped_rows == 0
-
-    assert collateral_count(
-        db_session,
-        organization_a.id,
-    ) == 1
-
-    assert collateral_count(
-        db_session,
-        organization_b.id,
-    ) == 1
+    assert data["total_rows"] == 3
+    assert data["imported_rows"] == 1
+    assert data["skipped_rows"] == 2
+    assert collateral_count(engine, organization_id) == 1
 
 
-def test_duplicate_references_inside_csv_are_skipped(
-    db_session,
+def test_same_external_reference_is_allowed_in_another_organization(
+    import_api_client,
 ):
-    organization = create_organization(
-        db_session,
-        "Bank F",
+    client, engine = import_api_client
+
+    first_organization_id = create_organization(
+        client,
+        "First Import Bank",
+    )
+    second_organization_id = create_organization(
+        client,
+        "Second Import Bank",
     )
 
-    result = make_validation(
-        "external_ref,property_type,is_synthetic\n"
-        "DUP-001,villa,true\n"
-        "DUP-001,apartment,true\n"
-        "UNIQUE-001,villa,false\n"
+    csv_content = (
+        b"external_ref,property_type,is_synthetic\n"
+        b"C-001,villa,true\n"
     )
 
-    assert result.preview.valid_rows == 1
-    assert result.preview.invalid_rows == 2
-    assert len(result.valid_records) == 1
-
-    report = execute_collateral_import(
-        db_session,
-        organization.id,
-        result,
+    first_response = upload_csv(
+        client,
+        first_organization_id,
+        csv_content,
+    )
+    second_response = upload_csv(
+        client,
+        second_organization_id,
+        csv_content,
     )
 
-    assert report.total_rows == 3
-    assert report.imported_rows == 1
-    assert report.skipped_rows == 2
-    assert report.failed_rows == 0
+    assert first_response.status_code == 200, first_response.text
+    assert second_response.status_code == 200, second_response.text
 
-    assert collateral_count(
-        db_session,
-        organization.id,
-    ) == 1
+    assert first_response.json()["imported_rows"] == 1
+    assert second_response.json()["imported_rows"] == 1
+
+    assert collateral_count(engine) == 2
+    assert collateral_count(engine, first_organization_id) == 1
+    assert collateral_count(engine, second_organization_id) == 1
 
 
-def test_archived_reference_is_also_skipped(db_session):
-    organization = create_organization(
-        db_session,
-        "Bank G",
+def test_import_unknown_organization_returns_404(import_api_client):
+    client, engine = import_api_client
+
+    response = upload_csv(
+        client,
+        "00000000-0000-0000-0000-000000000000",
+        (
+            b"external_ref,property_type,is_synthetic\n"
+            b"C-001,villa,true\n"
+        ),
     )
 
-    db_session.add(
-        Collateral(
-            organization_id=organization.id,
-            external_ref="ARCHIVED-001",
-            property_type="villa",
-            is_synthetic=True,
-            is_archived=True,
-        )
-    )
-    db_session.commit()
+    assert response.status_code == 404
+    assert collateral_count(engine) == 0
 
-    result = make_validation(
-        "external_ref,property_type,is_synthetic\n"
-        "ARCHIVED-001,apartment,true\n"
-    )
 
-    report = execute_collateral_import(
-        db_session,
-        organization.id,
-        result,
+def test_import_invalid_csv_structure_returns_422(import_api_client):
+    client, engine = import_api_client
+    organization_id = create_organization(client)
+
+    response = upload_csv(
+        client,
+        organization_id,
+        (
+            b"external_ref,property_type\n"
+            b"C-001,villa\n"
+        ),
     )
 
-    assert report.imported_rows == 0
-    assert report.skipped_rows == 1
-
-    assert collateral_count(
-        db_session,
-        organization.id,
-    ) == 1
+    assert response.status_code == 422
+    assert collateral_count(engine, organization_id) == 0
 
 
-def test_integrity_error_rolls_back_entire_import(
-    db_session,
-    monkeypatch,
-):
-    organization = create_organization(
-        db_session,
-        "Bank H",
+def test_import_oversized_csv_returns_422(import_api_client):
+    client, engine = import_api_client
+    organization_id = create_organization(client)
+
+    oversized_content = (
+        b"external_ref,property_type,is_synthetic\n"
+        + b"A" * (10 * 1024 * 1024)
     )
 
-    result = make_validation(
-        "external_ref,property_type,is_synthetic\n"
-        "C-101,villa,true\n"
-        "C-102,apartment,false\n"
+    response = upload_csv(
+        client,
+        organization_id,
+        oversized_content,
     )
 
-    def fail_commit():
-        raise IntegrityError(
-            "INSERT",
-            {},
-            Exception("Simulated database integrity error"),
-        )
+    assert response.status_code == 422
+    assert collateral_count(engine, organization_id) == 0
 
-    monkeypatch.setattr(
-        db_session,
-        "commit",
-        fail_commit,
-    )
-
-    with pytest.raises(CollateralImportConflict):
-        execute_collateral_import(
-            db_session,
-            organization.id,
-            result,
-        )
-
-    assert collateral_count(
-        db_session,
-        organization.id,
-    ) == 0
