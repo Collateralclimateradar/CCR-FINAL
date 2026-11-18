@@ -1,18 +1,22 @@
 # CCR Backend
 
-Backend services for Climate Guard AI.
+Backend services for Climate Guard AI (banking climate-risk platform).
 
-**Status: Phase 1 (foundation).** The backend starts, connects to a PostgreSQL/PostGIS
-database, and reports its health. No climate-risk features exist yet.
+**Status:** development. Banking data (organizations, collaterals, valuations, CSV import)
+exists. There is **no login yet**, and no climate-risk calculations.
 
 ## What exists
 
-- `GET /api/v1/health` - reports app status and checks the database for real.
-  Returns HTTP 200 when healthy and HTTP 503 when the database is unreachable.
-- Settings read from environment variables (no passwords in code).
-- Database connection (SQLAlchemy) and migration setup (Alembic, no tables yet).
-- Docker and Docker Compose files (API + PostGIS database).
-- Automated tests that do not need a real database.
+- `GET /api/v1/health`: app status plus a real database check (200 healthy, 503 if the database is down).
+- Organizations, collaterals (create, read, partial update, archive, restore) and valuations.
+- CSV import for collaterals: preview (no writes) and execution (one transaction).
+- Alembic migrations, Docker Compose (API + PostgreSQL/PostGIS), automated tests.
+
+## Development routes (no login)
+
+The routes under `/api/v1/organizations` have **no authentication**. They are OFF by default.
+They only run when `ENABLE_DEV_ROUTES=true`, and never when `ENVIRONMENT=production`.
+Do not expose a server with these routes enabled to the internet.
 
 ## Run with Docker
 
@@ -20,7 +24,7 @@ database, and reports its health. No climate-risk features exist yet.
    (use the same password inside `DATABASE_URL`).
 2. From this folder: `docker compose up --build`
 3. Open http://localhost:8000/api/v1/health
-4. Interactive API docs (development only): http://localhost:8000/docs
+4. Interactive API docs (not available in production): http://localhost:8000/docs
 
 ## Run the tests
 
@@ -37,7 +41,10 @@ backend/
     main.py          application entry point
     core/            settings and logging
     db/              database connection and base class for tables
-    api/v1/          version 1 of the API (health check so far)
+    models/          database tables
+    schemas/         request and response shapes
+    services/        business logic (CSV import)
+    api/v1/          API routes
   migrations/        database migrations (Alembic)
   tests/             automated tests
 ```
@@ -50,9 +57,5 @@ backend/
 
 ## Roadmap
 
-Phase 2 banking data, Phase 3 geospatial, Phase 4 climate risk engine,
-Phase 5 financial exposure, Phase 6 security, Phase 7 frontend integration,
-Phase 8 testing and deployment.
-Tests run automatically on GitHub Actions.
-Last checked: Nov 15 2026.
-
+Authentication and roles, climate hazard data, risk engine, financial exposure,
+frontend integration, deployment.
