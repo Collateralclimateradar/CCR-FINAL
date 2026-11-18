@@ -1,3 +1,4 @@
+
 """Tests for the development routes: organizations, collaterals, valuations."""
 import pytest
 from fastapi.testclient import TestClient
@@ -5,7 +6,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 from sqlalchemy.pool import StaticPool
 
-import ccr.models  # noqa: F401  (registers all tables)
+import ccr.models  # noqa: F401 (registers all tables)
 from ccr.core.config import get_settings
 from ccr.db.base import Base
 from ccr.db.session import get_db
@@ -15,7 +16,9 @@ from ccr.main import app, create_app
 @pytest.fixture
 def client():
     engine = create_engine(
-        "sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool
+        "sqlite://",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
     )
     Base.metadata.create_all(engine)
 
@@ -26,6 +29,7 @@ def client():
     app.dependency_overrides[get_db] = override
     yield TestClient(app)
     app.dependency_overrides.clear()
+    engine.dispose()
 
 
 def make_org(client, name="Bank A"):
@@ -47,7 +51,10 @@ COLLATERAL = {
 
 def make_collateral(client, org_id, **overrides):
     body = {**COLLATERAL, **overrides}
-    response = client.post(f"/api/v1/organizations/{org_id}/collaterals", json=body)
+    response = client.post(
+        f"/api/v1/organizations/{org_id}/collaterals",
+        json=body,
+    )
     assert response.status_code == 201, response.text
     return response.json()["id"]
 
@@ -66,14 +73,18 @@ def test_duplicate_organization_name_is_rejected(client):
 
 
 def test_unknown_organization_returns_404(client):
-    response = client.get("/api/v1/organizations/00000000-0000-0000-0000-000000000000")
+    response = client.get(
+        "/api/v1/organizations/00000000-0000-0000-0000-000000000000"
+    )
     assert response.status_code == 404
 
 
 def test_create_and_list_collaterals(client):
     org_id = make_org(client)
     col_id = make_collateral(client, org_id)
-    listing = client.get(f"/api/v1/organizations/{org_id}/collaterals").json()
+    listing = client.get(
+        f"/api/v1/organizations/{org_id}/collaterals"
+    ).json()
     assert [c["id"] for c in listing] == [col_id]
     assert listing[0]["organization_id"] == org_id
 
@@ -82,23 +93,33 @@ def test_duplicate_ref_rejected_in_same_org_but_allowed_in_another(client):
     bank_a = make_org(client, "Bank A")
     bank_b = make_org(client, "Bank B")
     make_collateral(client, bank_a)
-    duplicate = client.post(f"/api/v1/organizations/{bank_a}/collaterals", json=COLLATERAL)
+    duplicate = client.post(
+        f"/api/v1/organizations/{bank_a}/collaterals",
+        json=COLLATERAL,
+    )
     assert duplicate.status_code == 409
-    make_collateral(client, bank_b)  # same ref, different bank: allowed
+    make_collateral(client, bank_b)
 
 
 def test_one_bank_cannot_see_another_banks_collateral(client):
     bank_a = make_org(client, "Bank A")
     bank_b = make_org(client, "Bank B")
     col_id = make_collateral(client, bank_a)
-    assert client.get(f"/api/v1/organizations/{bank_b}/collaterals").json() == []
-    assert client.get(f"/api/v1/organizations/{bank_b}/collaterals/{col_id}").status_code == 404
+    assert client.get(
+        f"/api/v1/organizations/{bank_b}/collaterals"
+    ).json() == []
+    assert client.get(
+        f"/api/v1/organizations/{bank_b}/collaterals/{col_id}"
+    ).status_code == 404
 
 
 def test_synthetic_flag_is_required(client):
     org_id = make_org(client)
     body = {k: v for k, v in COLLATERAL.items() if k != "is_synthetic"}
-    response = client.post(f"/api/v1/organizations/{org_id}/collaterals", json=body)
+    response = client.post(
+        f"/api/v1/organizations/{org_id}/collaterals",
+        json=body,
+    )
     assert response.status_code == 422
 
 
@@ -106,15 +127,20 @@ def test_synthetic_flag_is_required(client):
     "bad",
     [
         {"latitude": "123.0"},
-        {"longitude": None},  # latitude without longitude
+        {"longitude": None},
         {"country_code": "ae"},
-        {"organization_id": "00000000-0000-0000-0000-000000000000"},  # not accepted
+        {
+            "organization_id": (
+                "00000000-0000-0000-0000-000000000000"
+            )
+        },
     ],
 )
 def test_invalid_collateral_is_rejected(client, bad):
     org_id = make_org(client)
     response = client.post(
-        f"/api/v1/organizations/{org_id}/collaterals", json={**COLLATERAL, **bad}
+        f"/api/v1/organizations/{org_id}/collaterals",
+        json={**COLLATERAL, **bad},
     )
     assert response.status_code == 422
 
@@ -122,8 +148,15 @@ def test_invalid_collateral_is_rejected(client, bad):
 def test_valuation_history_newest_first(client):
     org_id = make_org(client)
     col_id = make_collateral(client, org_id)
-    url = f"/api/v1/organizations/{org_id}/collaterals/{col_id}/valuations"
-    for amount, day in [("1000000.00", "2025-01-01"), ("1200000.00", "2026-01-01")]:
+    url = (
+        f"/api/v1/organizations/{org_id}/collaterals"
+        f"/{col_id}/valuations"
+    )
+
+    for amount, day in [
+        ("1000000.00", "2025-01-01"),
+        ("1200000.00", "2026-01-01"),
+    ]:
         response = client.post(
             url,
             json={
@@ -134,6 +167,7 @@ def test_valuation_history_newest_first(client):
             },
         )
         assert response.status_code == 201, response.text
+
     dates = [v["valuation_date"] for v in client.get(url).json()]
     assert dates == ["2026-01-01", "2025-01-01"]
 
@@ -175,7 +209,109 @@ def test_development_routes_are_off_in_production(monkeypatch):
     try:
         production_app = create_app()
         production_client = TestClient(production_app)
-        assert production_client.post("/api/v1/organizations", json={"name": "X"}).status_code == 404
-        assert production_client.get("/api/v1/health").status_code in (200, 503)
+        assert production_client.post(
+            "/api/v1/organizations",
+            json={"name": "X"},
+        ).status_code == 404
+        assert production_client.get(
+            "/api/v1/health"
+        ).status_code in (200, 503)
     finally:
         get_settings.cache_clear()
+
+
+def test_archive_hides_collateral_but_preserves_valuation_history(client):
+    org_id = make_org(client)
+    col_id = make_collateral(client, org_id)
+    base_url = (
+        f"/api/v1/organizations/{org_id}/collaterals/{col_id}"
+    )
+    valuation_url = f"{base_url}/valuations"
+
+    created = client.post(
+        valuation_url,
+        json={
+            "value_amount": "1500000.00",
+            "currency": "AED",
+            "valuation_date": "2026-01-01",
+            "is_synthetic": True,
+        },
+    )
+    assert created.status_code == 201
+
+    archived = client.delete(base_url)
+    assert archived.status_code == 200
+    assert archived.json()["is_archived"] is True
+
+    listing = client.get(
+        f"/api/v1/organizations/{org_id}/collaterals"
+    )
+    assert listing.status_code == 200
+    assert listing.json() == []
+
+    included = client.get(
+        f"/api/v1/organizations/{org_id}/collaterals"
+        "?include_archived=true"
+    )
+    assert included.status_code == 200
+    assert len(included.json()) == 1
+    assert included.json()[0]["id"] == col_id
+
+    assert client.get(base_url).status_code == 404
+
+    history = client.get(
+        f"{valuation_url}?include_archived=true"
+    )
+    assert history.status_code == 200
+    assert len(history.json()) == 1
+
+
+def test_archived_collateral_cannot_receive_new_valuations(client):
+    org_id = make_org(client)
+    col_id = make_collateral(client, org_id)
+    base_url = (
+        f"/api/v1/organizations/{org_id}/collaterals/{col_id}"
+    )
+
+    assert client.delete(base_url).status_code == 200
+
+    response = client.post(
+        f"{base_url}/valuations",
+        json={
+            "value_amount": "100.00",
+            "currency": "AED",
+            "valuation_date": "2026-01-01",
+            "is_synthetic": True,
+        },
+    )
+    assert response.status_code == 404
+
+
+def test_archived_collateral_can_be_restored(client):
+    org_id = make_org(client)
+    col_id = make_collateral(client, org_id)
+    base_url = (
+        f"/api/v1/organizations/{org_id}/collaterals/{col_id}"
+    )
+
+    assert client.delete(base_url).status_code == 200
+
+    restored = client.post(f"{base_url}/restore")
+    assert restored.status_code == 200
+    assert restored.json()["is_archived"] is False
+
+    listing = client.get(
+        f"/api/v1/organizations/{org_id}/collaterals"
+    )
+    assert [item["id"] for item in listing.json()] == [col_id]
+
+
+def test_archive_endpoint_respects_organization_isolation(client):
+    bank_a = make_org(client, "Bank A")
+    bank_b = make_org(client, "Bank B")
+    col_id = make_collateral(client, bank_a)
+
+    response = client.delete(
+        f"/api/v1/organizations/{bank_b}/collaterals/{col_id}"
+    )
+    assert response.status_code == 404
