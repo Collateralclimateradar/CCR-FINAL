@@ -27,11 +27,18 @@ from ccr.schemas.collateral import (
     CollateralRead,
     CollateralUpdate,
 )
-from ccr.schemas.collateral_import import CollateralImportPreview
+from ccr.schemas.collateral_import import (
+    CollateralImportPreview,
+    CollateralImportReport,
+)
 from ccr.schemas.valuation import ValuationCreate, ValuationRead
 from ccr.services.collateral_import import (
     CSVImportError,
     validate_collateral_csv,
+)
+from ccr.services.collateral_import_execution import (
+    CollateralImportConflict,
+    execute_collateral_import,
 )
 
 
@@ -66,6 +73,54 @@ async def preview_collateral_import(
     except CSVImportError as exc:
         raise HTTPException(
             status_code=422,
+            detail=str(exc),
+        ) from exc
+
+    finally:
+        await file.close()
+
+
+@router.post(
+    "/import",
+    response_model=CollateralImportReport,
+    status_code=200,
+)
+async def execute_collateral_csv_import(
+    file: UploadFile = File(...),
+    org: Organization = Depends(get_organization_or_404),
+    db: Session = Depends(get_db),
+):
+    """
+    Validate and import collateral CSV records.
+
+    Invalid rows and existing references are skipped.
+    Database integrity conflicts roll back the entire transaction.
+
+    Development-only endpoint. Authentication is not implemented yet.
+    """
+
+    try:
+        content = await file.read(10 * 1024 * 1024 + 1)
+
+        validation_result = validate_collateral_csv(content)
+
+        report = execute_collateral_import(
+            db=db,
+            organization_id=org.id,
+            validation_result=validation_result,
+        )
+
+        return report
+
+    except CSVImportError as exc:
+        raise HTTPException(
+            status_code=422,
+            detail=str(exc),
+        ) from exc
+
+    except CollateralImportConflict as exc:
+        raise HTTPException(
+            status_code=409,
             detail=str(exc),
         ) from exc
 
