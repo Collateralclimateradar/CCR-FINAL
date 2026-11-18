@@ -1,4 +1,3 @@
-
 """API integration tests for executing collateral CSV imports."""
 
 import uuid
