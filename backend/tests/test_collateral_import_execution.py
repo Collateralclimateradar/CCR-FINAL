@@ -288,4 +288,3 @@ def test_import_oversized_csv_returns_422(import_api_client):
 
     assert response.status_code == 422
     assert collateral_count(engine, organization_id) == 0
-
