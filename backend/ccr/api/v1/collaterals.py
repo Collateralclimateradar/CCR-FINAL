@@ -1,3 +1,4 @@
+
 """DEVELOPMENT-ONLY routes for collaterals and their valuations.
 
 There is no login yet (Phase 6). Every query is limited to the organization
@@ -22,14 +23,26 @@ router = APIRouter(
 )
 
 
-def _get_collateral_or_404(db: Session, organization_id: uuid.UUID, collateral_id: uuid.UUID):
+def _get_collateral_or_404(
+    db: Session,
+    organization_id: uuid.UUID,
+    collateral_id: uuid.UUID,
+    *,
+    include_archived: bool = False,
+):
     stmt = select(Collateral).where(
         Collateral.id == collateral_id,
-        Collateral.organization_id == organization_id,  # tenant isolation
+        Collateral.organization_id == organization_id,
     )
+
+    if not include_archived:
+        stmt = stmt.where(Collateral.is_archived.is_(False))
+
     collateral = db.scalars(stmt).first()
+
     if collateral is None:
         raise HTTPException(status_code=404, detail="Collateral not found.")
+
     return collateral
 
 
@@ -41,6 +54,7 @@ def create_collateral(
 ):
     collateral = Collateral(organization_id=org.id, **payload.model_dump())
     db.add(collateral)
+
     try:
         db.commit()
     except IntegrityError:
@@ -49,6 +63,7 @@ def create_collateral(
             status_code=409,
             detail="A collateral with this external_ref already exists in this organization.",
         )
+
     db.refresh(collateral)
     return collateral
 
@@ -59,14 +74,21 @@ def list_collaterals(
     db: Session = Depends(get_db),
     limit: int = Query(100, ge=1, le=500),
     offset: int = Query(0, ge=0),
+    include_archived: bool = Query(False),
 ):
+    stmt = select(Collateral).where(
+        Collateral.organization_id == org.id
+    )
+
+    if not include_archived:
+        stmt = stmt.where(Collateral.is_archived.is_(False))
+
     stmt = (
-        select(Collateral)
-        .where(Collateral.organization_id == org.id)  # tenant isolation
-        .order_by(Collateral.external_ref)
+        stmt.order_by(Collateral.external_ref)
         .limit(limit)
         .offset(offset)
     )
+
     return db.scalars(stmt).all()
 
 
@@ -75,12 +97,63 @@ def read_collateral(
     collateral_id: uuid.UUID,
     org: Organization = Depends(get_organization_or_404),
     db: Session = Depends(get_db),
+    include_archived: bool = Query(False),
 ):
-    return _get_collateral_or_404(db, org.id, collateral_id)
+    return _get_collateral_or_404(
+        db,
+        org.id,
+        collateral_id,
+        include_archived=include_archived,
+    )
+
+
+@router.delete("/{collateral_id}", response_model=CollateralRead)
+def archive_collateral(
+    collateral_id: uuid.UUID,
+    org: Organization = Depends(get_organization_or_404),
+    db: Session = Depends(get_db),
+):
+    """Archive without permanently deleting financial records."""
+
+    collateral = _get_collateral_or_404(
+        db, org.id, collateral_id
+    )
+
+    collateral.is_archived = True
+
+    db.commit()
+    db.refresh(collateral)
+
+    return collateral
+
+
+@router.post("/{collateral_id}/restore", response_model=CollateralRead)
+def restore_collateral(
+    collateral_id: uuid.UUID,
+    org: Organization = Depends(get_organization_or_404),
+    db: Session = Depends(get_db),
+):
+    """Restore an archived collateral."""
+
+    collateral = _get_collateral_or_404(
+        db,
+        org.id,
+        collateral_id,
+        include_archived=True,
+    )
+
+    collateral.is_archived = False
+
+    db.commit()
+    db.refresh(collateral)
+
+    return collateral
 
 
 @router.post(
-    "/{collateral_id}/valuations", response_model=ValuationRead, status_code=201
+    "/{collateral_id}/valuations",
+    response_model=ValuationRead,
+    status_code=201,
 )
 def create_valuation(
     collateral_id: uuid.UUID,
@@ -88,24 +161,43 @@ def create_valuation(
     org: Organization = Depends(get_organization_or_404),
     db: Session = Depends(get_db),
 ):
-    collateral = _get_collateral_or_404(db, org.id, collateral_id)
-    valuation = Valuation(collateral_id=collateral.id, **payload.model_dump())
+    collateral = _get_collateral_or_404(
+        db, org.id, collateral_id
+    )
+
+    valuation = Valuation(
+        collateral_id=collateral.id,
+        **payload.model_dump(),
+    )
+
     db.add(valuation)
     db.commit()
     db.refresh(valuation)
+
     return valuation
 
 
-@router.get("/{collateral_id}/valuations", response_model=list[ValuationRead])
+@router.get(
+    "/{collateral_id}/valuations",
+    response_model=list[ValuationRead],
+)
 def list_valuations(
     collateral_id: uuid.UUID,
     org: Organization = Depends(get_organization_or_404),
     db: Session = Depends(get_db),
+    include_archived: bool = Query(False),
 ):
-    collateral = _get_collateral_or_404(db, org.id, collateral_id)
+    collateral = _get_collateral_or_404(
+        db,
+        org.id,
+        collateral_id,
+        include_archived=include_archived,
+    )
+
     stmt = (
         select(Valuation)
         .where(Valuation.collateral_id == collateral.id)
         .order_by(Valuation.valuation_date.desc())
     )
+
     return db.scalars(stmt).all()
