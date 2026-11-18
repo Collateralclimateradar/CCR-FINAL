@@ -157,7 +157,6 @@ def validate_collateral_csv(content: bytes) -> CSVValidationResult:
         reader.fieldnames = normalized_headers
 
         preview_rows = []
-        all_issues = []
         valid_records = []
         seen_refs = set()
         total_rows = 0
@@ -188,7 +187,6 @@ def validate_collateral_csv(content: bytes) -> CSVValidationResult:
                         issues=issues,
                     )
                 )
-                all_issues.extend(issues)
                 continue
 
             normalized = _normalize_row(raw_row)
@@ -236,9 +234,6 @@ def validate_collateral_csv(content: bytes) -> CSVValidationResult:
 
             is_valid = not row_issues and validated_data is not None
 
-            if is_valid:
-                valid_records.append(validated_data)
-
             preview_rows.append(
                 CollateralImportRowPreview(
                     row_number=row_number,
@@ -247,7 +242,55 @@ def validate_collateral_csv(content: bytes) -> CSVValidationResult:
                     issues=row_issues,
                 )
             )
-            all_issues.extend(row_issues)
+
+            if is_valid:
+                valid_records.append(validated_data)
+
+        # Count references across all nonblank data rows.
+        # Every row sharing a duplicated reference must be rejected.
+        ref_counts = {}
+
+        for row in preview_rows:
+            if row.external_ref:
+                ref_counts[row.external_ref] = (
+                    ref_counts.get(row.external_ref, 0) + 1
+                )
+
+        duplicate_refs = {
+            ref
+            for ref, count in ref_counts.items()
+            if count > 1
+        }
+
+        for row in preview_rows:
+            if row.external_ref in duplicate_refs:
+                if not any(
+                    issue.code == "DUPLICATE_EXTERNAL_REF"
+                    for issue in row.issues
+                ):
+                    _add_issue(
+                        row.issues,
+                        row.row_number,
+                        "DUPLICATE_EXTERNAL_REF",
+                        "This external reference appears more than once in the file.",
+                        "external_ref",
+                    )
+
+                row.is_valid = False
+
+        # Remove every duplicated reference from importable records.
+        valid_records = [
+            record
+            for record in valid_records
+            if record.get("external_ref") not in duplicate_refs
+        ]
+
+        # Rebuild the issue list after duplicate validation.
+        all_issues = [
+            issue
+            for row in preview_rows
+            for issue in row.issues
+        ]
 
         valid_count = sum(
             1 for row in preview_rows if row.is_valid
