@@ -1,9 +1,6 @@
 
-"""Data shapes for collaterals.
+"""Pydantic schemas for collateral records."""
 
-The organization is never accepted from the client body.
-It is determined by the organization in the URL.
-"""
 import uuid
 from datetime import datetime
 from decimal import Decimal
@@ -14,6 +11,7 @@ from pydantic import (
     ConfigDict,
     Field,
     StringConstraints,
+    field_validator,
     model_validator,
 )
 
@@ -51,7 +49,6 @@ class CollateralCreate(BaseModel):
         max_digits=9,
         decimal_places=6,
     )
-
     longitude: Decimal | None = Field(
         default=None,
         ge=-180,
@@ -72,7 +69,7 @@ class CollateralCreate(BaseModel):
 
 
 class CollateralUpdate(BaseModel):
-    """Fields that may be changed through a partial update."""
+    """Fields allowed in a partial collateral update."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -90,7 +87,6 @@ class CollateralUpdate(BaseModel):
         max_digits=9,
         decimal_places=6,
     )
-
     longitude: Decimal | None = Field(
         default=None,
         ge=-180,
@@ -100,6 +96,18 @@ class CollateralUpdate(BaseModel):
     )
 
     is_synthetic: bool | None = None
+
+    @field_validator(
+        "external_ref",
+        "property_type",
+        "is_synthetic",
+        mode="before",
+    )
+    @classmethod
+    def reject_null_for_required_fields(cls, value):
+        if value is None:
+            raise ValueError("This field cannot be null")
+        return value
 
 
 class CollateralRead(BaseModel):
