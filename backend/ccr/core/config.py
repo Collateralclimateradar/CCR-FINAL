@@ -14,6 +14,10 @@ class Settings(BaseSettings):
     environment: str = "development"
     log_level: str = "INFO"
 
+    # The login-free development routes are OFF unless this is explicitly true.
+    # They are never enabled when environment is "production".
+    enable_dev_routes: bool = False
+
     # Required on purpose: there is no default, so no password lives in code.
     database_url: str
 
