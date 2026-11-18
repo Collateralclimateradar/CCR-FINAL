@@ -1,10 +1,6 @@
 
 """Tests for executing collateral CSV imports."""
 
-from datetime import date
-from decimal import Decimal
-from uuid import uuid4
-
 import pytest
 from sqlalchemy import create_engine, select
 from sqlalchemy.exc import IntegrityError
@@ -14,14 +10,10 @@ from sqlalchemy.pool import StaticPool
 import ccr.models  # noqa: F401
 from ccr.db.base import Base
 from ccr.models import Collateral, Organization
-from ccr.schemas.collateral_import import (
-    CollateralImportPreview,
-    CollateralImportRowPreview,
-)
-from ccr.services.collateral_import import (
+from ccr.services.collateral_import import validate_collateral_csv
+from ccr.services.collateral_import_execution import (
     CollateralImportConflict,
     execute_collateral_import,
-    validate_collateral_csv,
 )
 
 
