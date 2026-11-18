@@ -1,3 +1,4 @@
+
 """Data shapes for collaterals.
 
 The organization is never accepted from the client body: it always comes
@@ -8,11 +9,28 @@ from datetime import datetime
 from decimal import Decimal
 from typing import Annotated
 
-from pydantic import BaseModel, ConfigDict, Field, StringConstraints, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    StringConstraints,
+    model_validator,
+)
 
-Ref = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=100)]
-PropertyType = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=50)]
-Place = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=100)]
+Ref = Annotated[
+    str,
+    StringConstraints(strip_whitespace=True, min_length=1, max_length=100),
+]
+
+PropertyType = Annotated[
+    str,
+    StringConstraints(strip_whitespace=True, min_length=1, max_length=50),
+]
+
+Place = Annotated[
+    str,
+    StringConstraints(strip_whitespace=True, min_length=1, max_length=100),
+]
 
 
 class CollateralCreate(BaseModel):
@@ -24,15 +42,32 @@ class CollateralCreate(BaseModel):
     country_code: str | None = Field(default=None, pattern=r"^[A-Z]{2}$")
     region: Place | None = None
     city: Place | None = None
-    latitude: Decimal | None = Field(default=None, ge=-90, le=90, max_digits=9, decimal_places=6)
-    longitude: Decimal | None = Field(default=None, ge=-180, le=180, max_digits=9, decimal_places=6)
-    # Required on purpose: the sender must say if the record is synthetic.
+
+    latitude: Decimal | None = Field(
+        default=None,
+        ge=-90,
+        le=90,
+        max_digits=9,
+        decimal_places=6,
+    )
+
+    longitude: Decimal | None = Field(
+        default=None,
+        ge=-180,
+        le=180,
+        max_digits=9,
+        decimal_places=6,
+    )
+
+    # Required: the sender must identify synthetic records.
     is_synthetic: bool
 
     @model_validator(mode="after")
     def _coordinates_together(self):
         if (self.latitude is None) != (self.longitude is None):
-            raise ValueError("latitude and longitude must be provided together")
+            raise ValueError(
+                "latitude and longitude must be provided together"
+            )
         return self
 
 
@@ -50,4 +85,5 @@ class CollateralRead(BaseModel):
     latitude: Decimal | None
     longitude: Decimal | None
     is_synthetic: bool
+    is_archived: bool
     created_at: datetime
