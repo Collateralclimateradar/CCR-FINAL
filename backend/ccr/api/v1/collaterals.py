@@ -7,7 +7,14 @@ named in the URL, so one bank never sees another bank's records.
 
 import uuid
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import (
+    APIRouter,
+    Depends,
+    File,
+    HTTPException,
+    Query,
+    UploadFile,
+)
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -20,13 +27,50 @@ from ccr.schemas.collateral import (
     CollateralRead,
     CollateralUpdate,
 )
+from ccr.schemas.collateral_import import CollateralImportPreview
 from ccr.schemas.valuation import ValuationCreate, ValuationRead
+from ccr.services.collateral_import import (
+    CSVImportError,
+    validate_collateral_csv,
+)
 
 
 router = APIRouter(
     prefix="/organizations/{organization_id}/collaterals",
     tags=["collaterals (development only)"],
 )
+
+
+@router.post(
+    "/import/preview",
+    response_model=CollateralImportPreview,
+    status_code=200,
+)
+async def preview_collateral_import(
+    file: UploadFile = File(...),
+    org: Organization = Depends(get_organization_or_404),
+):
+    """
+    Validate an uploaded collateral CSV without writing to the database.
+
+    Development-only endpoint. Authentication is not implemented yet.
+    """
+
+    try:
+        content = await file.read(10 * 1024 * 1024 + 1)
+
+        result = validate_collateral_csv(content)
+
+        return result.preview
+
+    except CSVImportError as exc:
+        raise HTTPException(
+            status_code=422,
+            detail=str(exc),
+        ) from exc
+
+    finally:
+        await file.close()
 
 
 def _get_collateral_or_404(
@@ -145,8 +189,6 @@ def update_collateral(
             detail="At least one field must be provided.",
         )
 
-    # Validate the final coordinate pair, combining supplied values
-    # with the existing values in the database.
     new_latitude = updates.get("latitude", collateral.latitude)
     new_longitude = updates.get("longitude", collateral.longitude)
 
