@@ -4,6 +4,7 @@
 There is no login yet (Phase 6). Every query is limited to the organization
 named in the URL, so one bank never sees another bank's records.
 """
+
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -14,8 +15,13 @@ from sqlalchemy.orm import Session
 from ccr.api.deps import get_organization_or_404
 from ccr.db.session import get_db
 from ccr.models import Collateral, Organization, Valuation
-from ccr.schemas.collateral import CollateralCreate, CollateralRead
+from ccr.schemas.collateral import (
+    CollateralCreate,
+    CollateralRead,
+    CollateralUpdate,
+)
 from ccr.schemas.valuation import ValuationCreate, ValuationRead
+
 
 router = APIRouter(
     prefix="/organizations/{organization_id}/collaterals",
@@ -41,7 +47,10 @@ def _get_collateral_or_404(
     collateral = db.scalars(stmt).first()
 
     if collateral is None:
-        raise HTTPException(status_code=404, detail="Collateral not found.")
+        raise HTTPException(
+            status_code=404,
+            detail="Collateral not found.",
+        )
 
     return collateral
 
@@ -52,7 +61,10 @@ def create_collateral(
     org: Organization = Depends(get_organization_or_404),
     db: Session = Depends(get_db),
 ):
-    collateral = Collateral(organization_id=org.id, **payload.model_dump())
+    collateral = Collateral(
+        organization_id=org.id,
+        **payload.model_dump(),
+    )
     db.add(collateral)
 
     try:
@@ -61,7 +73,10 @@ def create_collateral(
         db.rollback()
         raise HTTPException(
             status_code=409,
-            detail="A collateral with this external_ref already exists in this organization.",
+            detail=(
+                "A collateral with this external_ref already exists "
+                "in this organization."
+            ),
         )
 
     db.refresh(collateral)
@@ -107,6 +122,59 @@ def read_collateral(
     )
 
 
+@router.patch("/{collateral_id}", response_model=CollateralRead)
+def update_collateral(
+    collateral_id: uuid.UUID,
+    payload: CollateralUpdate,
+    org: Organization = Depends(get_organization_or_404),
+    db: Session = Depends(get_db),
+):
+    """Partially update an active collateral record."""
+
+    collateral = _get_collateral_or_404(
+        db,
+        org.id,
+        collateral_id,
+    )
+
+    updates = payload.model_dump(exclude_unset=True)
+
+    if not updates:
+        raise HTTPException(
+            status_code=422,
+            detail="At least one field must be provided.",
+        )
+
+    # Validate the final coordinate pair, combining supplied values
+    # with the existing values in the database.
+    new_latitude = updates.get("latitude", collateral.latitude)
+    new_longitude = updates.get("longitude", collateral.longitude)
+
+    if (new_latitude is None) != (new_longitude is None):
+        raise HTTPException(
+            status_code=422,
+            detail="latitude and longitude must be provided together.",
+        )
+
+    for field, value in updates.items():
+        setattr(collateral, field, value)
+
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "The update conflicts with an existing collateral "
+                "record in this organization."
+            ),
+        )
+
+    db.refresh(collateral)
+    return collateral
+
+
 @router.delete("/{collateral_id}", response_model=CollateralRead)
 def archive_collateral(
     collateral_id: uuid.UUID,
@@ -116,7 +184,9 @@ def archive_collateral(
     """Archive without permanently deleting financial records."""
 
     collateral = _get_collateral_or_404(
-        db, org.id, collateral_id
+        db,
+        org.id,
+        collateral_id,
     )
 
     collateral.is_archived = True
@@ -127,7 +197,10 @@ def archive_collateral(
     return collateral
 
 
-@router.post("/{collateral_id}/restore", response_model=CollateralRead)
+@router.post(
+    "/{collateral_id}/restore",
+    response_model=CollateralRead,
+)
 def restore_collateral(
     collateral_id: uuid.UUID,
     org: Organization = Depends(get_organization_or_404),
@@ -162,7 +235,9 @@ def create_valuation(
     db: Session = Depends(get_db),
 ):
     collateral = _get_collateral_or_404(
-        db, org.id, collateral_id
+        db,
+        org.id,
+        collateral_id,
     )
 
     valuation = Valuation(
