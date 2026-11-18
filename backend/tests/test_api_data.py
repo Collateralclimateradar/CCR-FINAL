@@ -315,3 +315,168 @@ def test_archive_endpoint_respects_organization_isolation(client):
         f"/api/v1/organizations/{bank_b}/collaterals/{col_id}"
     )
     assert response.status_code == 404
+
+
+
+def test_update_collateral_partial_fields(client):
+    org_id = make_org(client)
+    col_id = make_collateral(client, org_id)
+
+    url = f"/api/v1/organizations/{org_id}/collaterals/{col_id}"
+
+    response = client.patch(
+        url,
+        json={"city": "Abu Dhabi"},
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+
+    assert data["city"] == "Abu Dhabi"
+    assert data["property_type"] == "villa"
+    assert data["external_ref"] == "C-001"
+
+
+def test_update_collateral_rejects_empty_payload(client):
+    org_id = make_org(client)
+    col_id = make_collateral(client, org_id)
+
+    url = f"/api/v1/organizations/{org_id}/collaterals/{col_id}"
+
+    response = client.patch(url, json={})
+
+    assert response.status_code == 422
+
+
+def test_update_collateral_rejects_null_required_fields(client):
+    org_id = make_org(client)
+    col_id = make_collateral(client, org_id)
+
+    url = f"/api/v1/organizations/{org_id}/collaterals/{col_id}"
+
+    for field in ("external_ref", "property_type", "is_synthetic"):
+        response = client.patch(url, json={field: None})
+        assert response.status_code == 422
+
+
+def test_update_collateral_validates_coordinate_pair(client):
+    org_id = make_org(client)
+    col_id = make_collateral(client, org_id)
+
+    url = f"/api/v1/organizations/{org_id}/collaterals/{col_id}"
+
+    # Existing longitude must be considered when latitude changes.
+    response = client.patch(
+        url,
+        json={"latitude": "24.500000"},
+    )
+    assert response.status_code == 200
+    assert response.json()["latitude"] == "24.500000"
+
+    # Clearing only one coordinate must be rejected.
+    response = client.patch(
+        url,
+        json={"latitude": None},
+    )
+    assert response.status_code == 422
+
+
+def test_update_collateral_rejects_invalid_coordinates(client):
+    org_id = make_org(client)
+    col_id = make_collateral(client, org_id)
+
+    url = f"/api/v1/organizations/{org_id}/collaterals/{col_id}"
+
+    response = client.patch(
+        url,
+        json={"latitude": "95.0"},
+    )
+
+    assert response.status_code == 422
+
+
+def test_update_collateral_rejects_duplicate_external_ref(client):
+    org_id = make_org(client)
+    first_id = make_collateral(client, org_id)
+    second_id = make_collateral(
+        client,
+        org_id,
+        external_ref="C-002",
+    )
+
+    url = f"/api/v1/organizations/{org_id}/collaterals/{second_id}"
+
+    response = client.patch(
+        url,
+        json={"external_ref": "C-001"},
+    )
+
+    assert response.status_code == 409
+
+    unchanged = client.get(url)
+    assert unchanged.json()["external_ref"] == "C-002"
+
+
+def test_update_collateral_cannot_cross_organizations(client):
+    bank_a = make_org(client, "Bank A")
+    bank_b = make_org(client, "Bank B")
+    col_id = make_collateral(client, bank_a)
+
+    url = f"/api/v1/organizations/{bank_b}/collaterals/{col_id}"
+
+    response = client.patch(
+        url,
+        json={"city": "Abu Dhabi"},
+    )
+
+    assert response.status_code == 404
+
+
+def test_archived_collateral_cannot_be_updated(client):
+    org_id = make_org(client)
+    col_id = make_collateral(client, org_id)
+
+    url = f"/api/v1/organizations/{org_id}/collaterals/{col_id}"
+
+    archived = client.delete(url)
+    assert archived.status_code == 200
+
+    response = client.patch(
+        url,
+        json={"city": "Abu Dhabi"},
+    )
+
+    assert response.status_code == 404
+
+
+def test_update_collateral_does_not_modify_valuation_history(client):
+    org_id = make_org(client)
+    col_id = make_collateral(client, org_id)
+
+    base_url = (
+        f"/api/v1/organizations/{org_id}/collaterals/{col_id}"
+    )
+    valuation_url = f"{base_url}/valuations"
+
+    created = client.post(
+        valuation_url,
+        json={
+            "value_amount": "1500000.00",
+            "currency": "AED",
+            "valuation_date": "2026-01-01",
+            "is_synthetic": True,
+        },
+    )
+    assert created.status_code == 201
+
+    updated = client.patch(
+        base_url,
+        json={"city": "Abu Dhabi"},
+    )
+    assert updated.status_code == 200
+
+    history = client.get(valuation_url)
+    assert history.status_code == 200
+    assert len(history.json()) == 1
+    assert history.json()[0]["value_amount"] == "1500000.00"
+
