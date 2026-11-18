@@ -4,6 +4,7 @@ import os
 # Must be set before the app is imported.
 os.environ.setdefault("DATABASE_URL", "sqlite://")
 os.environ.setdefault("ENVIRONMENT", "test")
+os.environ.setdefault("ENABLE_DEV_ROUTES", "true")
 
 import pytest
 from fastapi.testclient import TestClient
