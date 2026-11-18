@@ -5,9 +5,8 @@ import uuid
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine, func, select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
-from sqlalchemy.pool import StaticPool
 
 import ccr.models  # noqa: F401
 from ccr.db.base import Base
@@ -18,6 +17,9 @@ from ccr.models import Collateral
 
 @pytest.fixture
 def import_api_client():
+    from sqlalchemy import create_engine
+    from sqlalchemy.pool import StaticPool
+
     engine = create_engine(
         "sqlite://",
         connect_args={"check_same_thread": False},
