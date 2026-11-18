@@ -85,13 +85,20 @@ def test_duplicate_external_refs_are_detected():
     result = validate_collateral_csv(content)
 
     assert result.preview.total_rows == 2
-    assert result.preview.valid_rows == 1
-    assert result.preview.invalid_rows == 1
-    assert len(result.valid_records) == 1
-    assert any(
-        issue.code == "DUPLICATE_EXTERNAL_REF"
+    assert result.preview.valid_rows == 0
+    assert result.preview.invalid_rows == 2
+    assert len(result.valid_records) == 0
+
+    duplicate_issues = [
+        issue
         for issue in result.preview.issues
-    )
+        if issue.code == "DUPLICATE_EXTERNAL_REF"
+    ]
+
+    assert len(duplicate_issues) == 2
+    assert {
+        issue.row_number for issue in duplicate_issues
+    } == {2, 3}
 
 
 def test_invalid_coordinates_are_rejected():
@@ -146,7 +153,9 @@ def test_blank_rows_are_ignored():
 
 def test_non_bytes_input_is_rejected():
     with pytest.raises(TypeError):
-        validate_collateral_csv("external_ref,property_type,is_synthetic")
+        validate_collateral_csv(
+            "external_ref,property_type,is_synthetic"
+        )
 
 
 def test_csv_with_utf8_bom_is_supported():
