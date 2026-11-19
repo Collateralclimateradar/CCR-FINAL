@@ -696,3 +696,99 @@ def test_auth_headers_create_valid_authenticated_session(client):
     assert response.status_code == 200
     assert response.json()["email"].endswith("@example.com")
     assert response.json()["role"] == "admin"
+
+
+def test_collateral_routes_require_authentication(client):
+    """All collateral endpoints must reject anonymous requests."""
+
+    org_id = make_org(client)
+
+    # Remove the authenticated session created by make_org.
+    client.headers.pop("Authorization", None)
+
+    base_url = f"/api/v1/organizations/{org_id}/collaterals"
+    collateral_id = str(uuid.uuid4())
+
+    csv_content = (
+        b"external_ref,property_type,is_synthetic\n"
+        b"C-001,villa,true\n"
+    )
+
+    requests = [
+        ("GET collateral list", client.get(base_url)),
+        (
+            "POST create collateral",
+            client.post(base_url, json=COLLATERAL),
+        ),
+        (
+            "GET collateral detail",
+            client.get(f"{base_url}/{collateral_id}"),
+        ),
+        (
+            "PATCH collateral",
+            client.patch(
+                f"{base_url}/{collateral_id}",
+                json={"city": "Abu Dhabi"},
+            ),
+        ),
+        (
+            "DELETE collateral",
+            client.delete(f"{base_url}/{collateral_id}"),
+        ),
+        (
+            "POST restore collateral",
+            client.post(
+                f"{base_url}/{collateral_id}/restore"
+            ),
+        ),
+        (
+            "GET valuation history",
+            client.get(
+                f"{base_url}/{collateral_id}/valuations"
+            ),
+        ),
+        (
+            "POST create valuation",
+            client.post(
+                f"{base_url}/{collateral_id}/valuations",
+                json={
+                    "value_amount": "100000.00",
+                    "currency": "AED",
+                    "valuation_date": "2026-01-01",
+                    "is_synthetic": True,
+                },
+            ),
+        ),
+        (
+            "POST import preview",
+            client.post(
+                f"{base_url}/import/preview",
+                files={
+                    "file": (
+                        "collaterals.csv",
+                        csv_content,
+                        "text/csv",
+                    )
+                },
+            ),
+        ),
+        (
+            "POST import execution",
+            client.post(
+                f"{base_url}/import",
+                files={
+                    "file": (
+                        "collaterals.csv",
+                        csv_content,
+                        "text/csv",
+                    )
+                },
+            ),
+        ),
+    ]
+
+    for endpoint_name, response in requests:
+        assert response.status_code == 401, (
+            f"{endpoint_name}: expected 401, "
+            f"got {response.status_code}: {response.text}"
+        )
