@@ -21,6 +21,7 @@ services:
       DATABASE_URL: postgresql+psycopg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}
       ENVIRONMENT: ${ENVIRONMENT:-development}
       ENABLE_DEV_ROUTES: ${ENABLE_DEV_ROUTES:-false}
+      JWT_SECRET: ${JWT_SECRET:-}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
     ports:
       - "8000:8000"
