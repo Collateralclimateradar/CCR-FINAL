@@ -1,5 +1,7 @@
 
 """Tests for the development routes: organizations, collaterals, valuations."""
+import uuid
+
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
@@ -8,9 +10,11 @@ from sqlalchemy.pool import StaticPool
 
 import ccr.models  # noqa: F401 (registers all tables)
 from ccr.core.config import get_settings
+from ccr.core.security import hash_password
 from ccr.db.base import Base
 from ccr.db.session import get_db
 from ccr.main import app, create_app
+from ccr.models import Organization, User
 
 
 @pytest.fixture
@@ -27,7 +31,11 @@ def client():
             yield session
 
     app.dependency_overrides[get_db] = override
-    yield TestClient(app)
+    test_client = TestClient(app)
+    test_client.test_engine = engine
+
+    yield test_client
+
     app.dependency_overrides.clear()
     engine.dispose()
 
@@ -36,6 +44,38 @@ def make_org(client, name="Bank A"):
     response = client.post("/api/v1/organizations", json={"name": name})
     assert response.status_code == 201
     return response.json()["id"]
+
+
+def make_auth_headers(client, org_id):
+    """Create a real test user and return a JWT authorization header."""
+    password = "Test-Password-2026!"
+
+    with Session(client.test_engine) as db:
+        organization = db.get(Organization, uuid.UUID(org_id))
+        assert organization is not None
+
+        email = f"test-{uuid.uuid4().hex}@example.com"
+
+        user = User(
+            organization_id=organization.id,
+            email=email,
+            full_name="Test Admin",
+            role="admin",
+            is_active=True,
+            password_hash=hash_password(password),
+        )
+        db.add(user)
+        db.commit()
+
+    response = client.post(
+        "/api/v1/auth/login",
+        json={"email": email, "password": password},
+    )
+    assert response.status_code == 200, response.text
+
+    return {
+        "Authorization": f"Bearer {response.json()['access_token']}"
+    }
 
 
 COLLATERAL = {
@@ -317,7 +357,6 @@ def test_archive_endpoint_respects_organization_isolation(client):
     assert response.status_code == 404
 
 
-
 def test_update_collateral_partial_fields(client):
     org_id = make_org(client)
     col_id = make_collateral(client, org_id)
@@ -479,4 +518,3 @@ def test_update_collateral_does_not_modify_valuation_history(client):
     assert history.status_code == 200
     assert len(history.json()) == 1
     assert history.json()[0]["value_amount"] == "1500000.00"
-
