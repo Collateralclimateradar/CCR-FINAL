@@ -1,5 +1,7 @@
 
-"""API tests for collateral CSV preview uploads."""
+"""API tests for authenticated collateral CSV preview uploads."""
+
+import uuid
 
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, func, select
@@ -7,10 +9,11 @@ from sqlalchemy.orm import Session
 from sqlalchemy.pool import StaticPool
 
 import ccr.models  # noqa: F401
+from ccr.core.security import hash_password
 from ccr.db.base import Base
 from ccr.db.session import get_db
 from ccr.main import app
-from ccr.models import Collateral
+from ccr.models import Collateral, Organization, User
 
 
 def create_test_engine():
@@ -21,7 +24,55 @@ def create_test_engine():
     )
 
 
-def upload_csv(client, url, content):
+def create_organization(client):
+    """Create a test organization and return its ID and JWT headers."""
+    response = client.post(
+        "/api/v1/organizations",
+        json={"name": f"CSV Test Bank {uuid.uuid4().hex[:8]}"},
+    )
+    assert response.status_code == 201, response.text
+
+    organization_id = response.json()["id"]
+    password = "Test-Password-2026!"
+    email = f"csv-{uuid.uuid4().hex}@example.com"
+
+    with Session(client.test_engine) as db:
+        organization = db.get(
+            Organization,
+            uuid.UUID(organization_id),
+        )
+        assert organization is not None
+
+        user = User(
+            organization_id=organization.id,
+            email=email,
+            full_name="CSV Test Admin",
+            role="admin",
+            is_active=True,
+            password_hash=hash_password(password),
+        )
+        db.add(user)
+        db.commit()
+
+    login_response = client.post(
+        "/api/v1/auth/login",
+        json={
+            "email": email,
+            "password": password,
+        },
+    )
+    assert login_response.status_code == 200, login_response.text
+
+    headers = {
+        "Authorization": (
+            f"Bearer {login_response.json()['access_token']}"
+        )
+    }
+
+    return organization_id, headers
+
+
+def upload_csv(client, url, content, headers):
     return client.post(
         url,
         files={
@@ -31,16 +82,8 @@ def upload_csv(client, url, content):
                 "text/csv",
             )
         },
+        headers=headers,
     )
-
-
-def create_organization(client):
-    response = client.post(
-        "/api/v1/organizations",
-        json={"name": "CSV Test Bank"},
-    )
-    assert response.status_code == 201, response.text
-    return response.json()["id"]
 
 
 def preview_url(organization_id):
@@ -50,7 +93,7 @@ def preview_url(organization_id):
     )
 
 
-def test_preview_valid_csv():
+def setup_test_app():
     engine = create_test_engine()
     Base.metadata.create_all(engine)
 
@@ -60,9 +103,23 @@ def test_preview_valid_csv():
 
     app.dependency_overrides[get_db] = override_get_db
 
+    client = TestClient(app)
+    client.test_engine = engine
+
+    return client, engine
+
+
+def cleanup_test_app(engine):
+    app.dependency_overrides.clear()
+    engine.dispose()
+
+
+def test_preview_valid_csv():
+    client, engine = setup_test_app()
+
     try:
-        with TestClient(app) as client:
-            organization_id = create_organization(client)
+        with client:
+            organization_id, headers = create_organization(client)
 
             csv_content = (
                 b"external_ref,property_type,is_synthetic\n"
@@ -74,6 +131,7 @@ def test_preview_valid_csv():
                 client,
                 preview_url(organization_id),
                 csv_content,
+                headers,
             )
 
             assert response.status_code == 200, response.text
@@ -94,23 +152,15 @@ def test_preview_valid_csv():
             # Preview must never write records to the database.
             assert collateral_count == 0
     finally:
-        app.dependency_overrides.clear()
-        engine.dispose()
+        cleanup_test_app(engine)
 
 
 def test_preview_invalid_csv_returns_422():
-    engine = create_test_engine()
-    Base.metadata.create_all(engine)
-
-    def override_get_db():
-        with Session(engine) as session:
-            yield session
-
-    app.dependency_overrides[get_db] = override_get_db
+    client, engine = setup_test_app()
 
     try:
-        with TestClient(app) as client:
-            organization_id = create_organization(client)
+        with client:
+            organization_id, headers = create_organization(client)
 
             csv_content = (
                 b"external_ref,property_type\n"
@@ -121,80 +171,59 @@ def test_preview_invalid_csv_returns_422():
                 client,
                 preview_url(organization_id),
                 csv_content,
+                headers,
             )
 
             assert response.status_code == 422
             assert "detail" in response.json()
     finally:
-        app.dependency_overrides.clear()
-        engine.dispose()
+        cleanup_test_app(engine)
 
 
 def test_preview_empty_file_returns_422():
-    engine = create_test_engine()
-    Base.metadata.create_all(engine)
-
-    def override_get_db():
-        with Session(engine) as session:
-            yield session
-
-    app.dependency_overrides[get_db] = override_get_db
+    client, engine = setup_test_app()
 
     try:
-        with TestClient(app) as client:
-            organization_id = create_organization(client)
+        with client:
+            organization_id, headers = create_organization(client)
 
             response = upload_csv(
                 client,
                 preview_url(organization_id),
                 b"",
+                headers,
             )
 
             assert response.status_code == 422
     finally:
-        app.dependency_overrides.clear()
-        engine.dispose()
+        cleanup_test_app(engine)
 
 
 def test_preview_invalid_encoding_returns_422():
-    engine = create_test_engine()
-    Base.metadata.create_all(engine)
-
-    def override_get_db():
-        with Session(engine) as session:
-            yield session
-
-    app.dependency_overrides[get_db] = override_get_db
+    client, engine = setup_test_app()
 
     try:
-        with TestClient(app) as client:
-            organization_id = create_organization(client)
+        with client:
+            organization_id, headers = create_organization(client)
 
             response = upload_csv(
                 client,
                 preview_url(organization_id),
                 b"\xff\xfe\xfa",
+                headers,
             )
 
             assert response.status_code == 422
     finally:
-        app.dependency_overrides.clear()
-        engine.dispose()
+        cleanup_test_app(engine)
 
 
 def test_preview_file_over_10mb_returns_422():
-    engine = create_test_engine()
-    Base.metadata.create_all(engine)
-
-    def override_get_db():
-        with Session(engine) as session:
-            yield session
-
-    app.dependency_overrides[get_db] = override_get_db
+    client, engine = setup_test_app()
 
     try:
-        with TestClient(app) as client:
-            organization_id = create_organization(client)
+        with client:
+            organization_id, headers = create_organization(client)
 
             oversized_content = (
                 b"external_ref,property_type,is_synthetic\n"
@@ -205,26 +234,21 @@ def test_preview_file_over_10mb_returns_422():
                 client,
                 preview_url(organization_id),
                 oversized_content,
+                headers,
             )
 
             assert response.status_code == 422
     finally:
-        app.dependency_overrides.clear()
-        engine.dispose()
+        cleanup_test_app(engine)
 
 
 def test_preview_unknown_organization_returns_404():
-    engine = create_test_engine()
-    Base.metadata.create_all(engine)
-
-    def override_get_db():
-        with Session(engine) as session:
-            yield session
-
-    app.dependency_overrides[get_db] = override_get_db
+    client, engine = setup_test_app()
 
     try:
-        with TestClient(app) as client:
+        with client:
+            _, headers = create_organization(client)
+
             response = upload_csv(
                 client,
                 preview_url(
@@ -234,27 +258,20 @@ def test_preview_unknown_organization_returns_404():
                     b"external_ref,property_type,is_synthetic\n"
                     b"C-001,villa,true\n"
                 ),
+                headers,
             )
 
             assert response.status_code == 404
     finally:
-        app.dependency_overrides.clear()
-        engine.dispose()
+        cleanup_test_app(engine)
 
 
 def test_preview_duplicate_external_refs_marks_both_rows_invalid():
-    engine = create_test_engine()
-    Base.metadata.create_all(engine)
-
-    def override_get_db():
-        with Session(engine) as session:
-            yield session
-
-    app.dependency_overrides[get_db] = override_get_db
+    client, engine = setup_test_app()
 
     try:
-        with TestClient(app) as client:
-            organization_id = create_organization(client)
+        with client:
+            organization_id, headers = create_organization(client)
 
             csv_content = (
                 b"external_ref,property_type,is_synthetic\n"
@@ -266,6 +283,7 @@ def test_preview_duplicate_external_refs_marks_both_rows_invalid():
                 client,
                 preview_url(organization_id),
                 csv_content,
+                headers,
             )
 
             assert response.status_code == 200, response.text
@@ -288,23 +306,15 @@ def test_preview_duplicate_external_refs_marks_both_rows_invalid():
 
             assert len(duplicate_issues) == 2
     finally:
-        app.dependency_overrides.clear()
-        engine.dispose()
+        cleanup_test_app(engine)
 
 
 def test_preview_rejects_more_than_10000_rows():
-    engine = create_test_engine()
-    Base.metadata.create_all(engine)
-
-    def override_get_db():
-        with Session(engine) as session:
-            yield session
-
-    app.dependency_overrides[get_db] = override_get_db
+    client, engine = setup_test_app()
 
     try:
-        with TestClient(app) as client:
-            organization_id = create_organization(client)
+        with client:
+            organization_id, headers = create_organization(client)
 
             header = "external_ref,property_type,is_synthetic\n"
             rows = "".join(
@@ -316,28 +326,21 @@ def test_preview_rejects_more_than_10000_rows():
                 client,
                 preview_url(organization_id),
                 (header + rows).encode("utf-8"),
+                headers,
             )
 
             assert response.status_code == 422
             assert "detail" in response.json()
     finally:
-        app.dependency_overrides.clear()
-        engine.dispose()
+        cleanup_test_app(engine)
 
 
 def test_preview_malformed_csv_returns_422():
-    engine = create_test_engine()
-    Base.metadata.create_all(engine)
-
-    def override_get_db():
-        with Session(engine) as session:
-            yield session
-
-    app.dependency_overrides[get_db] = override_get_db
+    client, engine = setup_test_app()
 
     try:
-        with TestClient(app) as client:
-            organization_id = create_organization(client)
+        with client:
+            organization_id, headers = create_organization(client)
 
             csv_content = (
                 b"external_ref,property_type,is_synthetic\n"
@@ -348,10 +351,10 @@ def test_preview_malformed_csv_returns_422():
                 client,
                 preview_url(organization_id),
                 csv_content,
+                headers,
             )
 
             assert response.status_code == 422
             assert "detail" in response.json()
     finally:
-        app.dependency_overrides.clear()
-        engine.dispose()
+        cleanup_test_app(engine)
