@@ -330,7 +330,7 @@ def archive_collateral(
     db: Session = Depends(get_db),
     user: User = Depends(require_roles(UserRole.ADMIN)),
 ):
-    """Archive without permanently deleting financial records."""
+    """Archive and audit without permanently deleting financial records."""
 
     collateral = _get_collateral_or_404(
         db,
@@ -338,10 +338,38 @@ def archive_collateral(
         collateral_id,
     )
 
-    collateral.is_archived = True
-    db.commit()
-    db.refresh(collateral)
+    before_data = {
+        "is_archived": False,
+    }
 
+    collateral.is_archived = True
+
+    after_data = {
+        "is_archived": True,
+    }
+
+    try:
+        record_audit_event(
+            db,
+            organization_id=org.id,
+            actor_user_id=user.id,
+            action="collateral.archived",
+            entity_type="collateral",
+            entity_id=collateral.id,
+            before_data=before_data,
+            after_data=after_data,
+        )
+
+        db.commit()
+
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(
+            status_code=409,
+            detail="Unable to archive this collateral.",
+        )
+
+    db.refresh(collateral)
     return collateral
 
 
@@ -355,7 +383,7 @@ def restore_collateral(
     db: Session = Depends(get_db),
     user: User = Depends(require_roles(UserRole.ADMIN)),
 ):
-    """Restore an archived collateral."""
+    """Restore an archived collateral and audit the restoration."""
 
     collateral = _get_collateral_or_404(
         db,
@@ -364,10 +392,44 @@ def restore_collateral(
         include_archived=True,
     )
 
-    collateral.is_archived = False
-    db.commit()
-    db.refresh(collateral)
+    if not collateral.is_archived:
+        raise HTTPException(
+            status_code=409,
+            detail="Collateral is not archived.",
+        )
 
+    before_data = {
+        "is_archived": True,
+    }
+
+    collateral.is_archived = False
+
+    after_data = {
+        "is_archived": False,
+    }
+
+    try:
+        record_audit_event(
+            db,
+            organization_id=org.id,
+            actor_user_id=user.id,
+            action="collateral.restored",
+            entity_type="collateral",
+            entity_id=collateral.id,
+            before_data=before_data,
+            after_data=after_data,
+        )
+
+        db.commit()
+
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(
+            status_code=409,
+            detail="Unable to restore this collateral.",
+        )
+
+    db.refresh(collateral)
     return collateral
 
 
