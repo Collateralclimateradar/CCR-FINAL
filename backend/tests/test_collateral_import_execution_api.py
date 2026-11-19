@@ -1,24 +1,24 @@
-"""API integration tests for executing collateral CSV imports."""
+
+"""API integration tests for authenticated collateral CSV imports."""
 
 import uuid
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import func, select
+from sqlalchemy import create_engine, func, select
 from sqlalchemy.orm import Session
+from sqlalchemy.pool import StaticPool
 
 import ccr.models  # noqa: F401
+from ccr.core.security import hash_password
 from ccr.db.base import Base
 from ccr.db.session import get_db
 from ccr.main import app
-from ccr.models import Collateral
+from ccr.models import Collateral, Organization, User
 
 
 @pytest.fixture
 def import_api_client():
-    from sqlalchemy import create_engine
-    from sqlalchemy.pool import StaticPool
-
     engine = create_engine(
         "sqlite://",
         connect_args={"check_same_thread": False},
@@ -34,6 +34,8 @@ def import_api_client():
 
     try:
         with TestClient(app) as client:
+            client.test_engine = engine
+            client.auth_headers = {}
             yield client, engine
     finally:
         app.dependency_overrides.clear()
@@ -41,12 +43,52 @@ def import_api_client():
 
 
 def create_organization(client, name="Import Test Bank"):
+    """Create an organization, an admin user, and return its JWT headers."""
     response = client.post(
         "/api/v1/organizations",
-        json={"name": name},
+        json={"name": f"{name} {uuid.uuid4().hex[:8]}"},
     )
     assert response.status_code == 201, response.text
-    return response.json()["id"]
+
+    organization_id = response.json()["id"]
+    password = "Test-Password-2026!"
+    email = f"import-{uuid.uuid4().hex}@example.com"
+
+    with Session(client.test_engine) as db:
+        organization = db.get(
+            Organization,
+            uuid.UUID(organization_id),
+        )
+        assert organization is not None
+
+        user = User(
+            organization_id=organization.id,
+            email=email,
+            full_name="Import Test Admin",
+            role="admin",
+            is_active=True,
+            password_hash=hash_password(password),
+        )
+        db.add(user)
+        db.commit()
+
+    login_response = client.post(
+        "/api/v1/auth/login",
+        json={
+            "email": email,
+            "password": password,
+        },
+    )
+    assert login_response.status_code == 200, login_response.text
+
+    headers = {
+        "Authorization": (
+            f"Bearer {login_response.json()['access_token']}"
+        )
+    }
+    client.auth_headers[organization_id] = headers
+
+    return organization_id, headers
 
 
 def import_url(organization_id):
@@ -56,7 +98,10 @@ def import_url(organization_id):
     )
 
 
-def upload_csv(client, organization_id, content):
+def upload_csv(client, organization_id, content, headers=None):
+    if headers is None:
+        headers = client.auth_headers[organization_id]
+
     return client.post(
         import_url(organization_id),
         files={
@@ -66,6 +111,7 @@ def upload_csv(client, organization_id, content):
                 "text/csv",
             )
         },
+        headers=headers,
     )
 
 
@@ -84,7 +130,7 @@ def collateral_count(engine, organization_id=None):
 
 def test_import_valid_csv_persists_records(import_api_client):
     client, engine = import_api_client
-    organization_id = create_organization(client)
+    organization_id, headers = create_organization(client)
 
     csv_content = (
         b"external_ref,property_type,is_synthetic\n"
@@ -92,7 +138,12 @@ def test_import_valid_csv_persists_records(import_api_client):
         b"C-002,apartment,false\n"
     )
 
-    response = upload_csv(client, organization_id, csv_content)
+    response = upload_csv(
+        client,
+        organization_id,
+        csv_content,
+        headers,
+    )
 
     assert response.status_code == 200, response.text
 
@@ -109,7 +160,7 @@ def test_import_skips_invalid_rows_and_imports_valid_rows(
     import_api_client,
 ):
     client, engine = import_api_client
-    organization_id = create_organization(client)
+    organization_id, headers = create_organization(client)
 
     csv_content = (
         b"external_ref,property_type,is_synthetic\n"
@@ -117,7 +168,12 @@ def test_import_skips_invalid_rows_and_imports_valid_rows(
         b",apartment,true\n"
     )
 
-    response = upload_csv(client, organization_id, csv_content)
+    response = upload_csv(
+        client,
+        organization_id,
+        csv_content,
+        headers,
+    )
 
     assert response.status_code == 200, response.text
 
@@ -132,7 +188,7 @@ def test_import_skips_invalid_rows_and_imports_valid_rows(
 
 def test_import_skips_existing_external_reference(import_api_client):
     client, engine = import_api_client
-    organization_id = create_organization(client)
+    organization_id, headers = create_organization(client)
 
     first_csv = (
         b"external_ref,property_type,is_synthetic\n"
@@ -143,6 +199,7 @@ def test_import_skips_existing_external_reference(import_api_client):
         client,
         organization_id,
         first_csv,
+        headers,
     )
     assert first_response.status_code == 200, first_response.text
     assert first_response.json()["imported_rows"] == 1
@@ -157,6 +214,7 @@ def test_import_skips_existing_external_reference(import_api_client):
         client,
         organization_id,
         second_csv,
+        headers,
     )
 
     assert second_response.status_code == 200, second_response.text
@@ -177,7 +235,7 @@ def test_import_duplicate_references_in_csv_are_skipped(
     import_api_client,
 ):
     client, engine = import_api_client
-    organization_id = create_organization(client)
+    organization_id, headers = create_organization(client)
 
     csv_content = (
         b"external_ref,property_type,is_synthetic\n"
@@ -186,7 +244,12 @@ def test_import_duplicate_references_in_csv_are_skipped(
         b"C-002,villa,false\n"
     )
 
-    response = upload_csv(client, organization_id, csv_content)
+    response = upload_csv(
+        client,
+        organization_id,
+        csv_content,
+        headers,
+    )
 
     assert response.status_code == 200, response.text
 
@@ -203,11 +266,11 @@ def test_same_external_reference_is_allowed_in_another_organization(
 ):
     client, engine = import_api_client
 
-    first_organization_id = create_organization(
+    first_organization_id, first_headers = create_organization(
         client,
         "First Import Bank",
     )
-    second_organization_id = create_organization(
+    second_organization_id, second_headers = create_organization(
         client,
         "Second Import Bank",
     )
@@ -221,11 +284,13 @@ def test_same_external_reference_is_allowed_in_another_organization(
         client,
         first_organization_id,
         csv_content,
+        first_headers,
     )
     second_response = upload_csv(
         client,
         second_organization_id,
         csv_content,
+        second_headers,
     )
 
     assert first_response.status_code == 200, first_response.text
@@ -241,6 +306,7 @@ def test_same_external_reference_is_allowed_in_another_organization(
 
 def test_import_unknown_organization_returns_404(import_api_client):
     client, engine = import_api_client
+    _, headers = create_organization(client)
 
     response = upload_csv(
         client,
@@ -249,6 +315,7 @@ def test_import_unknown_organization_returns_404(import_api_client):
             b"external_ref,property_type,is_synthetic\n"
             b"C-001,villa,true\n"
         ),
+        headers,
     )
 
     assert response.status_code == 404
@@ -257,7 +324,7 @@ def test_import_unknown_organization_returns_404(import_api_client):
 
 def test_import_invalid_csv_structure_returns_422(import_api_client):
     client, engine = import_api_client
-    organization_id = create_organization(client)
+    organization_id, headers = create_organization(client)
 
     response = upload_csv(
         client,
@@ -266,6 +333,7 @@ def test_import_invalid_csv_structure_returns_422(import_api_client):
             b"external_ref,property_type\n"
             b"C-001,villa\n"
         ),
+        headers,
     )
 
     assert response.status_code == 422
@@ -274,7 +342,7 @@ def test_import_invalid_csv_structure_returns_422(import_api_client):
 
 def test_import_oversized_csv_returns_422(import_api_client):
     client, engine = import_api_client
-    organization_id = create_organization(client)
+    organization_id, headers = create_organization(client)
 
     oversized_content = (
         b"external_ref,property_type,is_synthetic\n"
@@ -285,6 +353,7 @@ def test_import_oversized_csv_returns_422(import_api_client):
         client,
         organization_id,
         oversized_content,
+        headers,
     )
 
     assert response.status_code == 422
