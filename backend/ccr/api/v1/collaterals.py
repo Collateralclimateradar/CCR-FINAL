@@ -45,7 +45,6 @@ from ccr.services.collateral_import_execution import (
     execute_collateral_import,
 )
 
-
 router = APIRouter(
     prefix="/organizations/{organization_id}/collaterals",
     tags=["collaterals"],
@@ -338,15 +337,9 @@ def archive_collateral(
         collateral_id,
     )
 
-    before_data = {
-        "is_archived": False,
-    }
-
+    before_data = {"is_archived": False}
     collateral.is_archived = True
-
-    after_data = {
-        "is_archived": True,
-    }
+    after_data = {"is_archived": True}
 
     try:
         record_audit_event(
@@ -374,7 +367,7 @@ def archive_collateral(
 
 
 @router.post(
-    "/{collateral_id}/restore",
+    "/{collateral_id}/restore',
     response_model=CollateralRead,
 )
 def restore_collateral(
@@ -398,15 +391,9 @@ def restore_collateral(
             detail="Collateral is not archived.",
         )
 
-    before_data = {
-        "is_archived": True,
-    }
-
+    before_data = {"is_archived": True}
     collateral.is_archived = False
-
-    after_data = {
-        "is_archived": False,
-    }
+    after_data = {"is_archived": False}
 
     try:
         record_audit_event(
@@ -450,6 +437,7 @@ def create_valuation(
     collateral = _get_collateral_or_404(
         db,
         org.id,
+        collateral_id,
     )
 
     valuation = Valuation(
@@ -493,7 +481,7 @@ def create_valuation(
 
 
 @router.get(
-    "/{collateral_id}/valuations",
+    "/{collateral_id}/valuations',
     response_model=list[ValuationRead],
 )
 def list_valuations(
