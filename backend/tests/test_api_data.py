@@ -8,7 +8,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 from sqlalchemy.pool import StaticPool
 
-import ccr.models  # noqa: F401 (registers all tables)
+import ccr.models  # noqa: F401
 from ccr.core.config import get_settings
 from ccr.core.security import hash_password
 from ccr.db.base import Base
@@ -41,8 +41,8 @@ def client():
     engine.dispose()
 
 
-def make_auth_headers(client, org_id):
-    """Create a real test user and return a JWT authorization header."""
+def make_auth_headers(client, org_id, role="admin"):
+    """Create a test user with the selected role and return a JWT."""
     password = "Test-Password-2026!"
 
     with Session(client.test_engine) as db:
@@ -54,8 +54,8 @@ def make_auth_headers(client, org_id):
         user = User(
             organization_id=organization.id,
             email=email,
-            full_name="Test Admin",
-            role="admin",
+            full_name=f"Test {role.title()}",
+            role=role,
             is_active=True,
             password_hash=hash_password(password),
         )
@@ -110,7 +110,6 @@ COLLATERAL = {
 def make_collateral(client, org_id, headers=None, **overrides):
     """Create a collateral using the selected organization's JWT."""
     body = {**COLLATERAL, **overrides}
-
     request_headers = (
         headers if headers is not None else client.headers
     )
@@ -163,7 +162,6 @@ def test_create_and_list_collaterals(client):
     )
 
     assert listing_response.status_code == 200
-
     listing = listing_response.json()
     assert [c["id"] for c in listing] == [col_id]
     assert listing[0]["organization_id"] == org_id
@@ -181,7 +179,6 @@ def test_duplicate_ref_rejected_in_same_org_but_allowed_in_another(client):
         json=COLLATERAL,
         headers=headers_a,
     )
-
     assert duplicate.status_code == 409
 
     headers_b = use_org(client, bank_b)
@@ -205,7 +202,6 @@ def test_one_bank_cannot_see_another_banks_collateral(client):
         f"/api/v1/organizations/{bank_b}/collaterals",
         headers=headers_b,
     )
-
     assert listing.status_code == 200
     assert listing.json() == []
 
@@ -213,7 +209,6 @@ def test_one_bank_cannot_see_another_banks_collateral(client):
         f"/api/v1/organizations/{bank_b}/collaterals/{col_id}",
         headers=headers_b,
     )
-
     assert detail.status_code == 404
 
 
@@ -230,7 +225,6 @@ def test_synthetic_flag_is_required(client):
         f"/api/v1/organizations/{org_id}/collaterals",
         json=body,
     )
-
     assert response.status_code == 422
 
 
@@ -254,7 +248,6 @@ def test_invalid_collateral_is_rejected(client, bad):
         f"/api/v1/organizations/{org_id}/collaterals",
         json={**COLLATERAL, **bad},
     )
-
     assert response.status_code == 422
 
 
@@ -280,18 +273,15 @@ def test_valuation_history_newest_first(client):
                 "is_synthetic": True,
             },
         )
-
         assert response.status_code == 201, response.text
 
     history = client.get(url)
-
     assert history.status_code == 200
 
     dates = [
         valuation["valuation_date"]
         for valuation in history.json()
     ]
-
     assert dates == ["2026-01-01", "2025-01-01"]
 
 
@@ -308,7 +298,6 @@ def test_negative_valuation_is_rejected(client):
             "is_synthetic": True,
         },
     )
-
     assert response.status_code == 422
 
 
@@ -335,7 +324,6 @@ def test_valuation_cannot_be_added_to_another_banks_collateral(client):
             "is_synthetic": True,
         },
     )
-
     assert response.status_code == 404
 
 
@@ -378,18 +366,15 @@ def test_archive_hides_collateral_but_preserves_valuation_history(client):
             "is_synthetic": True,
         },
     )
-
     assert created.status_code == 201
 
     archived = client.delete(base_url)
-
     assert archived.status_code == 200
     assert archived.json()["is_archived"] is True
 
     listing = client.get(
         f"/api/v1/organizations/{org_id}/collaterals"
     )
-
     assert listing.status_code == 200
     assert listing.json() == []
 
@@ -397,7 +382,6 @@ def test_archive_hides_collateral_but_preserves_valuation_history(client):
         f"/api/v1/organizations/{org_id}/collaterals"
         "?include_archived=true"
     )
-
     assert included.status_code == 200
     assert len(included.json()) == 1
     assert included.json()[0]["id"] == col_id
@@ -407,7 +391,6 @@ def test_archive_hides_collateral_but_preserves_valuation_history(client):
     history = client.get(
         f"{valuation_url}?include_archived=true"
     )
-
     assert history.status_code == 200
     assert len(history.json()) == 1
 
@@ -432,7 +415,6 @@ def test_archived_collateral_cannot_receive_new_valuations(client):
             "is_synthetic": True,
         },
     )
-
     assert response.status_code == 404
 
 
@@ -448,14 +430,12 @@ def test_archived_collateral_can_be_restored(client):
     assert archived.status_code == 200
 
     restored = client.post(f"{base_url}/restore")
-
     assert restored.status_code == 200
     assert restored.json()["is_archived"] is False
 
     listing = client.get(
         f"/api/v1/organizations/{org_id}/collaterals"
     )
-
     assert listing.status_code == 200
     assert [item["id"] for item in listing.json()] == [col_id]
 
@@ -477,7 +457,6 @@ def test_archive_endpoint_respects_organization_isolation(client):
         f"/api/v1/organizations/{bank_b}/collaterals/{col_id}",
         headers=headers_b,
     )
-
     assert response.status_code == 404
 
 
@@ -493,11 +472,9 @@ def test_update_collateral_partial_fields(client):
         url,
         json={"city": "Abu Dhabi"},
     )
-
     assert response.status_code == 200
 
     data = response.json()
-
     assert data["city"] == "Abu Dhabi"
     assert data["property_type"] == "villa"
     assert data["external_ref"] == "C-001"
@@ -512,7 +489,6 @@ def test_update_collateral_rejects_empty_payload(client):
     )
 
     response = client.patch(url, json={})
-
     assert response.status_code == 422
 
 
@@ -529,7 +505,6 @@ def test_update_collateral_rejects_null_required_fields(client):
             url,
             json={field: None},
         )
-
         assert response.status_code == 422
 
 
@@ -545,7 +520,6 @@ def test_update_collateral_validates_coordinate_pair(client):
         url,
         json={"latitude": "24.500000"},
     )
-
     assert response.status_code == 200
     assert response.json()["latitude"] == "24.500000"
 
@@ -553,7 +527,6 @@ def test_update_collateral_validates_coordinate_pair(client):
         url,
         json={"latitude": None},
     )
-
     assert response.status_code == 422
 
 
@@ -569,7 +542,6 @@ def test_update_collateral_rejects_invalid_coordinates(client):
         url,
         json={"latitude": "95.0"},
     )
-
     assert response.status_code == 422
 
 
@@ -592,11 +564,9 @@ def test_update_collateral_rejects_duplicate_external_ref(client):
         url,
         json={"external_ref": "C-001"},
     )
-
     assert response.status_code == 409
 
     unchanged = client.get(url)
-
     assert unchanged.status_code == 200
     assert unchanged.json()["external_ref"] == "C-002"
 
@@ -623,7 +593,6 @@ def test_update_collateral_cannot_cross_organizations(client):
         headers=headers_b,
         json={"city": "Abu Dhabi"},
     )
-
     assert response.status_code == 404
 
 
@@ -642,7 +611,6 @@ def test_archived_collateral_cannot_be_updated(client):
         url,
         json={"city": "Abu Dhabi"},
     )
-
     assert response.status_code == 404
 
 
@@ -664,18 +632,15 @@ def test_update_collateral_does_not_modify_valuation_history(client):
             "is_synthetic": True,
         },
     )
-
     assert created.status_code == 201
 
     updated = client.patch(
         base_url,
         json={"city": "Abu Dhabi"},
     )
-
     assert updated.status_code == 200
 
     history = client.get(valuation_url)
-
     assert history.status_code == 200
     assert len(history.json()) == 1
     assert history.json()[0]["value_amount"] == "1500000.00"
@@ -685,14 +650,12 @@ def test_auth_headers_create_valid_authenticated_session(client):
     org_id = make_org(client)
 
     headers = client.auth_headers[org_id]
-
     assert headers["Authorization"].startswith("Bearer ")
 
     response = client.get(
         "/api/v1/auth/me",
         headers=headers,
     )
-
     assert response.status_code == 200
     assert response.json()["email"].endswith("@example.com")
     assert response.json()["role"] == "admin"
@@ -700,10 +663,8 @@ def test_auth_headers_create_valid_authenticated_session(client):
 
 def test_collateral_routes_require_authentication(client):
     """All collateral endpoints must reject anonymous requests."""
-
     org_id = make_org(client)
 
-    # Remove the authenticated session created by make_org.
     client.headers.pop("Authorization", None)
 
     base_url = f"/api/v1/organizations/{org_id}/collaterals"
@@ -792,3 +753,232 @@ def test_collateral_routes_require_authentication(client):
             f"{endpoint_name}: expected 401, "
             f"got {response.status_code}: {response.text}"
         )
+
+
+def test_viewer_is_read_only_for_collateral_routes(client):
+    """Viewer can read collateral data but cannot modify anything."""
+    org_id = make_org(client)
+    admin_headers = client.auth_headers[org_id]
+
+    collateral_id = make_collateral(
+        client,
+        org_id,
+        headers=admin_headers,
+    )
+
+    base_url = (
+        f"/api/v1/organizations/{org_id}/collaterals"
+    )
+    item_url = f"{base_url}/{collateral_id}"
+    valuation_url = f"{item_url}/valuations"
+
+    viewer_headers = make_auth_headers(
+        client,
+        org_id,
+        role="viewer",
+    )
+
+    assert client.get(
+        base_url,
+        headers=viewer_headers,
+    ).status_code == 200
+
+    assert client.get(
+        item_url,
+        headers=viewer_headers,
+    ).status_code == 200
+
+    assert client.get(
+        valuation_url,
+        headers=viewer_headers,
+    ).status_code == 200
+
+    requests = [
+        client.post(
+            base_url,
+            headers=viewer_headers,
+            json={
+                **COLLATERAL,
+                "external_ref": "VIEWER-NEW",
+            },
+        ),
+        client.patch(
+            item_url,
+            headers=viewer_headers,
+            json={"city": "Abu Dhabi"},
+        ),
+        client.delete(
+            item_url,
+            headers=viewer_headers,
+        ),
+        client.post(
+            f"{item_url}/restore",
+            headers=viewer_headers,
+        ),
+        client.post(
+            valuation_url,
+            headers=viewer_headers,
+            json={
+                "value_amount": "100000.00",
+                "currency": "AED",
+                "valuation_date": "2026-01-01",
+                "is_synthetic": True,
+            },
+        ),
+    ]
+
+    csv_content = (
+        b"external_ref,property_type,is_synthetic\n"
+        b"VIEWER-IMPORT,villa,true\n"
+    )
+
+    requests.extend([
+        client.post(
+            f"{base_url}/import/preview",
+            headers=viewer_headers,
+            files={
+                "file": (
+                    "collaterals.csv",
+                    csv_content,
+                    "text/csv",
+                )
+            },
+        ),
+        client.post(
+            f"{base_url}/import",
+            headers=viewer_headers,
+            files={
+                "file": (
+                    "collaterals.csv",
+                    csv_content,
+                    "text/csv",
+                )
+            },
+        ),
+    ])
+
+    for response in requests:
+        assert response.status_code == 403, (
+            f"Expected 403, got {response.status_code}: "
+            f"{response.text}"
+        )
+
+
+def test_analyst_can_edit_but_cannot_archive_or_restore(client):
+    """Analyst can manage collateral data but cannot archive or restore."""
+    org_id = make_org(client)
+    admin_headers = client.auth_headers[org_id]
+
+    active_id = make_collateral(
+        client,
+        org_id,
+        headers=admin_headers,
+        external_ref="ANALYST-ACTIVE",
+    )
+
+    archived_id = make_collateral(
+        client,
+        org_id,
+        headers=admin_headers,
+        external_ref="ANALYST-ARCHIVED",
+    )
+
+    base_url = (
+        f"/api/v1/organizations/{org_id}/collaterals"
+    )
+    active_url = f"{base_url}/{active_id}"
+    archived_url = f"{base_url}/{archived_id}"
+
+    archived_response = client.delete(
+        archived_url,
+        headers=admin_headers,
+    )
+    assert archived_response.status_code == 200
+
+    analyst_headers = make_auth_headers(
+        client,
+        org_id,
+        role="analyst",
+    )
+
+    assert client.get(
+        base_url,
+        headers=analyst_headers,
+    ).status_code == 200
+
+    assert client.get(
+        active_url,
+        headers=analyst_headers,
+    ).status_code == 200
+
+    created = client.post(
+        base_url,
+        headers=analyst_headers,
+        json={
+            **COLLATERAL,
+            "external_ref": "ANALYST-CREATED",
+        },
+    )
+    assert created.status_code == 201, created.text
+
+    updated = client.patch(
+        active_url,
+        headers=analyst_headers,
+        json={"city": "Abu Dhabi"},
+    )
+    assert updated.status_code == 200, updated.text
+
+    csv_content = (
+        b"external_ref,property_type,is_synthetic\n"
+        b"ANALYST-IMPORTED,villa,true\n"
+    )
+
+    preview = client.post(
+        f"{base_url}/import/preview",
+        headers=analyst_headers,
+        files={
+            "file": (
+                "collaterals.csv",
+                csv_content,
+                "text/csv",
+            )
+        },
+    )
+    assert preview.status_code == 200, preview.text
+
+    imported = client.post(
+        f"{base_url}/import",
+        headers=analyst_headers,
+        files={
+            "file": (
+                "collaterals.csv",
+                csv_content,
+                "text/csv",
+            )
+        },
+    )
+    assert imported.status_code == 200, imported.text
+
+    valuation = client.post(
+        f"{active_url}/valuations",
+        headers=analyst_headers,
+        json={
+            "value_amount": "250000.00",
+            "currency": "AED",
+            "valuation_date": "2026-02-01",
+            "is_synthetic": True,
+        },
+    )
+    assert valuation.status_code == 201, valuation.text
+
+    archive_attempt = client.delete(
+        active_url,
+        headers=analyst_headers,
+    )
+    assert archive_attempt.status_code == 403
+
+    restore_attempt = client.post(
+        f"{archived_url}/restore",
+        headers=analyst_headers,
+    )
+    assert restore_attempt.status_code == 403
