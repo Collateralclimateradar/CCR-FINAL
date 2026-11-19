@@ -1,4 +1,3 @@
-
 """Role-protected routes for organization collaterals and valuations."""
 
 import uuid
@@ -52,6 +51,22 @@ router = APIRouter(
 
 EDITOR_ROLES = (UserRole.ADMIN, UserRole.ANALYST)
 
+MAX_UPLOAD_BYTES = 10 * 1024 * 1024
+
+
+async def _read_csv_upload(file: UploadFile) -> bytes:
+    """Read an uploaded CSV, rejecting files over the size limit."""
+
+    content = await file.read(MAX_UPLOAD_BYTES + 1)
+
+    if len(content) > MAX_UPLOAD_BYTES:
+        raise HTTPException(
+            status_code=413,
+            detail="File too large. Maximum size is 10 MB.",
+        )
+
+    return content
+
 
 @router.post(
     "/import/preview",
@@ -60,13 +75,15 @@ EDITOR_ROLES = (UserRole.ADMIN, UserRole.ANALYST)
 )
 async def preview_collateral_import(
     file: UploadFile = File(...),
-    org: Organization = Depends(get_authorized_organization_or_404),
+    org: Organization = Depends(
+        get_authorized_organization_or_404
+    ),
     user: User = Depends(require_roles(*EDITOR_ROLES)),
 ):
     """Validate a collateral CSV without writing to the database."""
 
     try:
-        content = await file.read(10 * 1024 * 1024 + 1)
+        content = await _read_csv_upload(file)
         result = validate_collateral_csv(content)
         return result.preview
 
@@ -87,14 +104,16 @@ async def preview_collateral_import(
 )
 async def execute_collateral_csv_import(
     file: UploadFile = File(...),
-    org: Organization = Depends(get_authorized_organization_or_404),
+    org: Organization = Depends(
+        get_authorized_organization_or_404
+    ),
     db: Session = Depends(get_db),
     user: User = Depends(require_roles(*EDITOR_ROLES)),
 ):
     """Validate and import collateral CSV records for the caller's bank."""
 
     try:
-        content = await file.read(10 * 1024 * 1024 + 1)
+        content = await _read_csv_upload(file)
         validation_result = validate_collateral_csv(content)
 
         report = execute_collateral_import(
@@ -134,7 +153,9 @@ def _get_collateral_or_404(
     )
 
     if not include_archived:
-        stmt = stmt.where(Collateral.is_archived.is_(False))
+        stmt = stmt.where(
+            Collateral.is_archived.is_(False)
+        )
 
     collateral = db.scalars(stmt).first()
 
@@ -147,10 +168,16 @@ def _get_collateral_or_404(
     return collateral
 
 
-@router.post("", response_model=CollateralRead, status_code=201)
+@router.post(
+    "",
+    response_model=CollateralRead,
+    status_code=201,
+)
 def create_collateral(
     payload: CollateralCreate,
-    org: Organization = Depends(get_authorized_organization_or_404),
+    org: Organization = Depends(
+        get_authorized_organization_or_404
+    ),
     db: Session = Depends(get_db),
     user: User = Depends(require_roles(*EDITOR_ROLES)),
 ):
@@ -160,6 +187,7 @@ def create_collateral(
         organization_id=org.id,
         **payload.model_dump(),
     )
+
     db.add(collateral)
 
     try:
@@ -184,23 +212,34 @@ def create_collateral(
 
         db.commit()
 
-    except IntegrityError:
+    except IntegrityError as exc:
         db.rollback()
+
         raise HTTPException(
             status_code=409,
             detail=(
                 "A collateral with this external_ref already exists "
                 "in this organization."
             ),
-        )
+        ) from exc
+
+    except Exception:
+        db.rollback()
+        raise
 
     db.refresh(collateral)
+
     return collateral
 
 
-@router.get("", response_model=list[CollateralRead])
+@router.get(
+    "",
+    response_model=list[CollateralRead],
+)
 def list_collaterals(
-    org: Organization = Depends(get_authorized_organization_or_404),
+    org: Organization = Depends(
+        get_authorized_organization_or_404
+    ),
     db: Session = Depends(get_db),
     limit: int = Query(100, ge=1, le=500),
     offset: int = Query(0, ge=0),
@@ -211,7 +250,9 @@ def list_collaterals(
     )
 
     if not include_archived:
-        stmt = stmt.where(Collateral.is_archived.is_(False))
+        stmt = stmt.where(
+            Collateral.is_archived.is_(False)
+        )
 
     stmt = (
         stmt.order_by(Collateral.external_ref)
@@ -222,10 +263,15 @@ def list_collaterals(
     return db.scalars(stmt).all()
 
 
-@router.get("/{collateral_id}", response_model=CollateralRead)
+@router.get(
+    "/{collateral_id}",
+    response_model=CollateralRead,
+)
 def read_collateral(
     collateral_id: uuid.UUID,
-    org: Organization = Depends(get_authorized_organization_or_404),
+    org: Organization = Depends(
+        get_authorized_organization_or_404
+    ),
     db: Session = Depends(get_db),
     include_archived: bool = Query(False),
 ):
@@ -237,11 +283,16 @@ def read_collateral(
     )
 
 
-@router.patch("/{collateral_id}", response_model=CollateralRead)
+@router.patch(
+    "/{collateral_id}",
+    response_model=CollateralRead,
+)
 def update_collateral(
     collateral_id: uuid.UUID,
     payload: CollateralUpdate,
-    org: Organization = Depends(get_authorized_organization_or_404),
+    org: Organization = Depends(
+        get_authorized_organization_or_404
+    ),
     db: Session = Depends(get_db),
     user: User = Depends(require_roles(*EDITOR_ROLES)),
 ):
@@ -261,13 +312,22 @@ def update_collateral(
             detail="At least one field must be provided.",
         )
 
-    new_latitude = updates.get("latitude", collateral.latitude)
-    new_longitude = updates.get("longitude", collateral.longitude)
+    new_latitude = updates.get(
+        "latitude",
+        collateral.latitude,
+    )
+
+    new_longitude = updates.get(
+        "longitude",
+        collateral.longitude,
+    )
 
     if (new_latitude is None) != (new_longitude is None):
         raise HTTPException(
             status_code=422,
-            detail="latitude and longitude must be provided together.",
+            detail=(
+                "latitude and longitude must be provided together."
+            ),
         )
 
     audit_fields = (
@@ -308,26 +368,39 @@ def update_collateral(
 
         db.commit()
 
-    except IntegrityError:
+    except IntegrityError as exc:
         db.rollback()
+
         raise HTTPException(
             status_code=409,
             detail=(
                 "The update conflicts with an existing collateral "
                 "record in this organization."
             ),
-        )
+        ) from exc
+
+    except Exception:
+        db.rollback()
+        raise
 
     db.refresh(collateral)
+
     return collateral
 
 
-@router.delete("/{collateral_id}", response_model=CollateralRead)
+@router.delete(
+    "/{collateral_id}",
+    response_model=CollateralRead,
+)
 def archive_collateral(
     collateral_id: uuid.UUID,
-    org: Organization = Depends(get_authorized_organization_or_404),
+    org: Organization = Depends(
+        get_authorized_organization_or_404
+    ),
     db: Session = Depends(get_db),
-    user: User = Depends(require_roles(UserRole.ADMIN)),
+    user: User = Depends(
+        require_roles(UserRole.ADMIN)
+    ),
 ):
     """Archive and audit without permanently deleting financial records."""
 
@@ -337,9 +410,15 @@ def archive_collateral(
         collateral_id,
     )
 
-    before_data = {"is_archived": False}
+    before_data = {
+        "is_archived": False,
+    }
+
     collateral.is_archived = True
-    after_data = {"is_archived": True}
+
+    after_data = {
+        "is_archived": True,
+    }
 
     try:
         record_audit_event(
@@ -355,26 +434,36 @@ def archive_collateral(
 
         db.commit()
 
-    except IntegrityError:
+    except IntegrityError as exc:
         db.rollback()
+
         raise HTTPException(
             status_code=409,
             detail="Unable to archive this collateral.",
-        )
+        ) from exc
+
+    except Exception:
+        db.rollback()
+        raise
 
     db.refresh(collateral)
+
     return collateral
 
 
 @router.post(
-    "/{collateral_id}/restore',
+    "/{collateral_id}/restore",
     response_model=CollateralRead,
 )
 def restore_collateral(
     collateral_id: uuid.UUID,
-    org: Organization = Depends(get_authorized_organization_or_404),
+    org: Organization = Depends(
+        get_authorized_organization_or_404
+    ),
     db: Session = Depends(get_db),
-    user: User = Depends(require_roles(UserRole.ADMIN)),
+    user: User = Depends(
+        require_roles(UserRole.ADMIN)
+    ),
 ):
     """Restore an archived collateral and audit the restoration."""
 
@@ -391,9 +480,15 @@ def restore_collateral(
             detail="Collateral is not archived.",
         )
 
-    before_data = {"is_archived": True}
+    before_data = {
+        "is_archived": True,
+    }
+
     collateral.is_archived = False
-    after_data = {"is_archived": False}
+
+    after_data = {
+        "is_archived": False,
+    }
 
     try:
         record_audit_event(
@@ -409,26 +504,34 @@ def restore_collateral(
 
         db.commit()
 
-    except IntegrityError:
+    except IntegrityError as exc:
         db.rollback()
+
         raise HTTPException(
             status_code=409,
             detail="Unable to restore this collateral.",
-        )
+        ) from exc
+
+    except Exception:
+        db.rollback()
+        raise
 
     db.refresh(collateral)
+
     return collateral
 
 
 @router.post(
-    "/{collateral_id}/valuations',
+    "/{collateral_id}/valuations",
     response_model=ValuationRead,
     status_code=201,
 )
 def create_valuation(
     collateral_id: uuid.UUID,
     payload: ValuationCreate,
-    org: Organization = Depends(get_authorized_organization_or_404),
+    org: Organization = Depends(
+        get_authorized_organization_or_404
+    ),
     db: Session = Depends(get_db),
     user: User = Depends(require_roles(*EDITOR_ROLES)),
 ):
@@ -459,9 +562,10 @@ def create_valuation(
             entity_id=valuation.id,
             after_data={
                 "collateral_id": str(collateral.id),
-                "value_amount": valuation.value_amount,
+                # str() keeps Decimal/date values JSON-serializable
+                "value_amount": str(valuation.value_amount),
                 "currency": valuation.currency,
-                "valuation_date": valuation.valuation_date,
+                "valuation_date": str(valuation.valuation_date),
                 "source": valuation.source,
                 "is_synthetic": valuation.is_synthetic,
             },
@@ -469,25 +573,35 @@ def create_valuation(
 
         db.commit()
 
-    except IntegrityError:
+    except IntegrityError as exc:
         db.rollback()
+
         raise HTTPException(
             status_code=409,
             detail="Unable to create this valuation.",
-        )
+        ) from exc
+
+    except Exception:
+        db.rollback()
+        raise
 
     db.refresh(valuation)
+
     return valuation
 
 
 @router.get(
-    "/{collateral_id}/valuations',
+    "/{collateral_id}/valuations",
     response_model=list[ValuationRead],
 )
 def list_valuations(
     collateral_id: uuid.UUID,
-    org: Organization = Depends(get_authorized_organization_or_404),
+    org: Organization = Depends(
+        get_authorized_organization_or_404
+    ),
     db: Session = Depends(get_db),
+    limit: int = Query(100, ge=1, le=500),
+    offset: int = Query(0, ge=0),
     include_archived: bool = Query(False),
 ):
     collateral = _get_collateral_or_404(
@@ -499,8 +613,15 @@ def list_valuations(
 
     stmt = (
         select(Valuation)
-        .where(Valuation.collateral_id == collateral.id)
-        .order_by(Valuation.valuation_date.desc())
+        .where(
+            Valuation.collateral_id == collateral.id
+        )
+        .order_by(
+            Valuation.valuation_date.desc(),
+            Valuation.id,
+        )
+        .limit(limit)
+        .offset(offset)
     )
 
     return db.scalars(stmt).all()
