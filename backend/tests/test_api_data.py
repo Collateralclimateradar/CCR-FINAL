@@ -999,7 +999,7 @@ def test_create_collateral_records_audit_event(client):
     assert response.status_code == 201, response.text
     collateral_id = response.json()["id"]
 
-    me_response = client.get("/api/v1/auth/me')
+    me_response = client.get("/api/v1/auth/me")
     assert me_response.status_code == 200, me_response.text
     actor_id = me_response.json()["id"]
 
