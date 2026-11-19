@@ -35,6 +35,7 @@ from ccr.schemas.collateral_import import (
     CollateralImportReport,
 )
 from ccr.schemas.valuation import ValuationCreate, ValuationRead
+from ccr.services.audit import record_audit_event
 from ccr.services.collateral_import import (
     CSVImportError,
     validate_collateral_csv,
@@ -154,6 +155,8 @@ def create_collateral(
     db: Session = Depends(get_db),
     user: User = Depends(require_roles(*EDITOR_ROLES)),
 ):
+    """Create a collateral and audit it in the same transaction."""
+
     collateral = Collateral(
         organization_id=org.id,
         **payload.model_dump(),
@@ -161,7 +164,27 @@ def create_collateral(
     db.add(collateral)
 
     try:
+        db.flush()
+
+        record_audit_event(
+            db,
+            organization_id=org.id,
+            actor_user_id=user.id,
+            action="collateral.created",
+            entity_type="collateral",
+            entity_id=collateral.id,
+            after_data={
+                "external_ref": collateral.external_ref,
+                "property_type": collateral.property_type,
+                "country_code": collateral.country_code,
+                "region": collateral.region,
+                "city": collateral.city,
+                "is_synthetic": collateral.is_synthetic,
+            },
+        )
+
         db.commit()
+
     except IntegrityError:
         db.rollback()
         raise HTTPException(
