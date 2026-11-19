@@ -1,5 +1,5 @@
 
-"""Authenticated routes for organization collaterals and valuations."""
+"""Role-protected routes for organization collaterals and valuations."""
 
 import uuid
 
@@ -15,9 +15,16 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from ccr.api.auth_deps import require_roles
 from ccr.api.deps import get_authorized_organization_or_404
 from ccr.db.session import get_db
-from ccr.models import Collateral, Organization, Valuation
+from ccr.models import (
+    Collateral,
+    Organization,
+    User,
+    UserRole,
+    Valuation,
+)
 from ccr.schemas.collateral import (
     CollateralCreate,
     CollateralRead,
@@ -43,6 +50,8 @@ router = APIRouter(
     tags=["collaterals"],
 )
 
+EDITOR_ROLES = (UserRole.ADMIN, UserRole.ANALYST)
+
 
 @router.post(
     "/import/preview",
@@ -52,6 +61,7 @@ router = APIRouter(
 async def preview_collateral_import(
     file: UploadFile = File(...),
     org: Organization = Depends(get_authorized_organization_or_404),
+    user: User = Depends(require_roles(*EDITOR_ROLES)),
 ):
     """Validate a collateral CSV without writing to the database."""
 
@@ -79,6 +89,7 @@ async def execute_collateral_csv_import(
     file: UploadFile = File(...),
     org: Organization = Depends(get_authorized_organization_or_404),
     db: Session = Depends(get_db),
+    user: User = Depends(require_roles(*EDITOR_ROLES)),
 ):
     """Validate and import collateral CSV records for the caller's bank."""
 
@@ -141,6 +152,7 @@ def create_collateral(
     payload: CollateralCreate,
     org: Organization = Depends(get_authorized_organization_or_404),
     db: Session = Depends(get_db),
+    user: User = Depends(require_roles(*EDITOR_ROLES)),
 ):
     collateral = Collateral(
         organization_id=org.id,
@@ -209,6 +221,7 @@ def update_collateral(
     payload: CollateralUpdate,
     org: Organization = Depends(get_authorized_organization_or_404),
     db: Session = Depends(get_db),
+    user: User = Depends(require_roles(*EDITOR_ROLES)),
 ):
     """Partially update an active collateral record."""
 
@@ -259,6 +272,7 @@ def archive_collateral(
     collateral_id: uuid.UUID,
     org: Organization = Depends(get_authorized_organization_or_404),
     db: Session = Depends(get_db),
+    user: User = Depends(require_roles(UserRole.ADMIN)),
 ):
     """Archive without permanently deleting financial records."""
 
@@ -283,6 +297,7 @@ def restore_collateral(
     collateral_id: uuid.UUID,
     org: Organization = Depends(get_authorized_organization_or_404),
     db: Session = Depends(get_db),
+    user: User = Depends(require_roles(UserRole.ADMIN)),
 ):
     """Restore an archived collateral."""
 
@@ -310,6 +325,7 @@ def create_valuation(
     payload: ValuationCreate,
     org: Organization = Depends(get_authorized_organization_or_404),
     db: Session = Depends(get_db),
+    user: User = Depends(require_roles(*EDITOR_ROLES)),
 ):
     collateral = _get_collateral_or_404(
         db,
