@@ -1,3 +1,4 @@
+
 """Role-protected routes for organization collaterals and valuations."""
 
 import uuid
@@ -61,7 +62,7 @@ async def _read_csv_upload(file: UploadFile) -> bytes:
 
     if len(content) > MAX_UPLOAD_BYTES:
         raise HTTPException(
-            status_code=413,
+            status_code=422,
             detail="File too large. Maximum size is 10 MB.",
         )
 
