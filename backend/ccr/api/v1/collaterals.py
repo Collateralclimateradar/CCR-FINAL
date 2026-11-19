@@ -1,9 +1,5 @@
 
-"""DEVELOPMENT-ONLY routes for collaterals and their valuations.
-
-There is no login yet (Phase 6). Every query is limited to the organization
-named in the URL, so one bank never sees another bank's records.
-"""
+"""Authenticated routes for organization collaterals and valuations."""
 
 import uuid
 
@@ -19,7 +15,7 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from ccr.api.deps import get_organization_or_404
+from ccr.api.deps import get_authorized_organization_or_404
 from ccr.db.session import get_db
 from ccr.models import Collateral, Organization, Valuation
 from ccr.schemas.collateral import (
@@ -44,7 +40,7 @@ from ccr.services.collateral_import_execution import (
 
 router = APIRouter(
     prefix="/organizations/{organization_id}/collaterals",
-    tags=["collaterals (development only)"],
+    tags=["collaterals"],
 )
 
 
@@ -55,19 +51,13 @@ router = APIRouter(
 )
 async def preview_collateral_import(
     file: UploadFile = File(...),
-    org: Organization = Depends(get_organization_or_404),
+    org: Organization = Depends(get_authorized_organization_or_404),
 ):
-    """
-    Validate an uploaded collateral CSV without writing to the database.
-
-    Development-only endpoint. Authentication is not implemented yet.
-    """
+    """Validate a collateral CSV without writing to the database."""
 
     try:
         content = await file.read(10 * 1024 * 1024 + 1)
-
         result = validate_collateral_csv(content)
-
         return result.preview
 
     except CSVImportError as exc:
@@ -87,21 +77,13 @@ async def preview_collateral_import(
 )
 async def execute_collateral_csv_import(
     file: UploadFile = File(...),
-    org: Organization = Depends(get_organization_or_404),
+    org: Organization = Depends(get_authorized_organization_or_404),
     db: Session = Depends(get_db),
 ):
-    """
-    Validate and import collateral CSV records.
-
-    Invalid rows and existing references are skipped.
-    Database integrity conflicts roll back the entire transaction.
-
-    Development-only endpoint. Authentication is not implemented yet.
-    """
+    """Validate and import collateral CSV records for the caller's bank."""
 
     try:
         content = await file.read(10 * 1024 * 1024 + 1)
-
         validation_result = validate_collateral_csv(content)
 
         report = execute_collateral_import(
@@ -157,7 +139,7 @@ def _get_collateral_or_404(
 @router.post("", response_model=CollateralRead, status_code=201)
 def create_collateral(
     payload: CollateralCreate,
-    org: Organization = Depends(get_organization_or_404),
+    org: Organization = Depends(get_authorized_organization_or_404),
     db: Session = Depends(get_db),
 ):
     collateral = Collateral(
@@ -184,7 +166,7 @@ def create_collateral(
 
 @router.get("", response_model=list[CollateralRead])
 def list_collaterals(
-    org: Organization = Depends(get_organization_or_404),
+    org: Organization = Depends(get_authorized_organization_or_404),
     db: Session = Depends(get_db),
     limit: int = Query(100, ge=1, le=500),
     offset: int = Query(0, ge=0),
@@ -209,7 +191,7 @@ def list_collaterals(
 @router.get("/{collateral_id}", response_model=CollateralRead)
 def read_collateral(
     collateral_id: uuid.UUID,
-    org: Organization = Depends(get_organization_or_404),
+    org: Organization = Depends(get_authorized_organization_or_404),
     db: Session = Depends(get_db),
     include_archived: bool = Query(False),
 ):
@@ -225,7 +207,7 @@ def read_collateral(
 def update_collateral(
     collateral_id: uuid.UUID,
     payload: CollateralUpdate,
-    org: Organization = Depends(get_organization_or_404),
+    org: Organization = Depends(get_authorized_organization_or_404),
     db: Session = Depends(get_db),
 ):
     """Partially update an active collateral record."""
@@ -275,7 +257,7 @@ def update_collateral(
 @router.delete("/{collateral_id}", response_model=CollateralRead)
 def archive_collateral(
     collateral_id: uuid.UUID,
-    org: Organization = Depends(get_organization_or_404),
+    org: Organization = Depends(get_authorized_organization_or_404),
     db: Session = Depends(get_db),
 ):
     """Archive without permanently deleting financial records."""
@@ -287,7 +269,6 @@ def archive_collateral(
     )
 
     collateral.is_archived = True
-
     db.commit()
     db.refresh(collateral)
 
@@ -300,7 +281,7 @@ def archive_collateral(
 )
 def restore_collateral(
     collateral_id: uuid.UUID,
-    org: Organization = Depends(get_organization_or_404),
+    org: Organization = Depends(get_authorized_organization_or_404),
     db: Session = Depends(get_db),
 ):
     """Restore an archived collateral."""
@@ -313,7 +294,6 @@ def restore_collateral(
     )
 
     collateral.is_archived = False
-
     db.commit()
     db.refresh(collateral)
 
@@ -328,7 +308,7 @@ def restore_collateral(
 def create_valuation(
     collateral_id: uuid.UUID,
     payload: ValuationCreate,
-    org: Organization = Depends(get_organization_or_404),
+    org: Organization = Depends(get_authorized_organization_or_404),
     db: Session = Depends(get_db),
 ):
     collateral = _get_collateral_or_404(
@@ -355,7 +335,7 @@ def create_valuation(
 )
 def list_valuations(
     collateral_id: uuid.UUID,
-    org: Organization = Depends(get_organization_or_404),
+    org: Organization = Depends(get_authorized_organization_or_404),
     db: Session = Depends(get_db),
     include_archived: bool = Query(False),
 ):
