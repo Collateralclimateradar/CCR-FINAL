@@ -246,7 +246,7 @@ def update_collateral(
     db: Session = Depends(get_db),
     user: User = Depends(require_roles(*EDITOR_ROLES)),
 ):
-    """Partially update an active collateral record."""
+    """Partially update a collateral record and audit the changes."""
 
     collateral = _get_collateral_or_404(
         db,
@@ -271,11 +271,44 @@ def update_collateral(
             detail="latitude and longitude must be provided together.",
         )
 
+    audit_fields = (
+        "external_ref",
+        "property_type",
+        "country_code",
+        "region",
+        "city",
+        "latitude",
+        "longitude",
+        "is_synthetic",
+    )
+
+    before_data = {
+        field: getattr(collateral, field)
+        for field in audit_fields
+    }
+
     for field, value in updates.items():
         setattr(collateral, field, value)
 
+    after_data = {
+        field: getattr(collateral, field)
+        for field in audit_fields
+    }
+
     try:
+        record_audit_event(
+            db,
+            organization_id=org.id,
+            actor_user_id=user.id,
+            action="collateral.updated",
+            entity_type="collateral",
+            entity_id=collateral.id,
+            before_data=before_data,
+            after_data=after_data,
+        )
+
         db.commit()
+
     except IntegrityError:
         db.rollback()
         raise HTTPException(
