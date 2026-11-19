@@ -89,11 +89,13 @@ COLLATERAL = {
 }
 
 
-def make_collateral(client, org_id, **overrides):
+def make_collateral(client, org_id, headers=None, **overrides):
+    """Create a collateral, optionally using an authenticated session."""
     body = {**COLLATERAL, **overrides}
     response = client.post(
         f"/api/v1/organizations/{org_id}/collaterals",
         json=body,
+        headers=headers,
     )
     assert response.status_code == 201, response.text
     return response.json()["id"]
