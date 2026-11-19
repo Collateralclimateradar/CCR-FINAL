@@ -5,6 +5,7 @@ import os
 os.environ.setdefault("DATABASE_URL", "sqlite://")
 os.environ.setdefault("ENVIRONMENT", "test")
 os.environ.setdefault("ENABLE_DEV_ROUTES", "true")
+os.environ.setdefault("JWT_SECRET", "test-only-secret-never-use-in-real-deployments-0123456789")
 
 import pytest
 from fastapi.testclient import TestClient
