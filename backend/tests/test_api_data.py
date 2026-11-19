@@ -1,20 +1,20 @@
 
 """Tests for the development routes: organizations, collaterals, valuations."""
+import pytest
 import uuid
 
-import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session
 from sqlalchemy.pool import StaticPool
 
-import ccr.models  # noqa: F401
+import ccr.models  # noqa: F401 (registers all tables)
 from ccr.core.config import get_settings
 from ccr.core.security import hash_password
 from ccr.db.base import Base
 from ccr.db.session import get_db
 from ccr.main import app, create_app
-from ccr.models import Organization, User
+from ccr.models import AuditLog, Organization, User
 
 
 @pytest.fixture
@@ -982,3 +982,49 @@ def test_analyst_can_edit_but_cannot_archive_or_restore(client):
         headers=analyst_headers,
     )
     assert restore_attempt.status_code == 403
+
+
+def test_create_collateral_records_audit_event(client):
+    """Creating collateral must record an audit event in the same organization."""
+    org_id = make_org(client)
+
+    response = client.post(
+        f"/api/v1/organizations/{org_id}/collaterals",
+        json={
+            **COLLATERAL,
+            "external_ref": "AUDIT-CREATE-001",
+        },
+    )
+
+    assert response.status_code == 201, response.text
+    collateral_id = response.json()["id"]
+
+    me_response = client.get("/api/v1/auth/me')
+    assert me_response.status_code == 200, me_response.text
+    actor_id = me_response.json()["id"]
+
+    with Session(client.test_engine) as db:
+        events = db.scalars(
+            select(AuditLog).where(
+                AuditLog.organization_id == uuid.UUID(org_id),
+                AuditLog.entity_id == collateral_id,
+                AuditLog.action == "collateral.created",
+            )
+        ).all()
+
+        assert len(events) == 1
+
+        event = events[0]
+
+        assert event.actor_user_id == uuid.UUID(actor_id)
+        assert event.entity_type == "collateral"
+        assert event.entity_id == collateral_id
+        assert event.before_data is None
+        assert event.after_data == {
+            "external_ref": "AUDIT-CREATE-001",
+            "property_type": "villa",
+            "country_code": "AE",
+            "region": "Dubai",
+            "city": None,
+            "is_synthetic": True,
+        }
