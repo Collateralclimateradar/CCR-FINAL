@@ -1,6 +1,7 @@
 """Users belong to exactly one organization.
 
-No passwords are stored yet. Secure login is built in Phase 6.
+Only an Argon2 hash of the password is stored (never the password itself).
+A user with no hash cannot log in.
 """
 import enum
 import uuid
@@ -31,3 +32,4 @@ class User(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     full_name: Mapped[str] = mapped_column(String(200), nullable=False)
     role: Mapped[str] = mapped_column(String(20), default=UserRole.VIEWER.value, nullable=False)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    password_hash: Mapped[str | None] = mapped_column(String(255))
