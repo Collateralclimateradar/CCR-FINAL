@@ -374,7 +374,7 @@ def archive_collateral(
 
 
 @router.post(
-    "/{collateral_id}/restore",
+    "/{collateral_id}/restore',
     response_model=CollateralRead,
 )
 def restore_collateral(
@@ -434,7 +434,7 @@ def restore_collateral(
 
 
 @router.post(
-    "/{collateral_id}/valuations",
+    "/{collateral_id}/valuations',
     response_model=ValuationRead,
     status_code=201,
 )
@@ -445,6 +445,8 @@ def create_valuation(
     db: Session = Depends(get_db),
     user: User = Depends(require_roles(*EDITOR_ROLES)),
 ):
+    """Create a valuation and record its audit event atomically."""
+
     collateral = _get_collateral_or_404(
         db,
         org.id,
@@ -457,14 +459,42 @@ def create_valuation(
     )
 
     db.add(valuation)
-    db.commit()
-    db.refresh(valuation)
 
+    try:
+        db.flush()
+
+        record_audit_event(
+            db,
+            organization_id=org.id,
+            actor_user_id=user.id,
+            action="valuation.created",
+            entity_type="valuation",
+            entity_id=valuation.id,
+            after_data={
+                "collateral_id": str(collateral.id),
+                "value_amount": valuation.value_amount,
+                "currency": valuation.currency,
+                "valuation_date": valuation.valuation_date,
+                "source": valuation.source,
+                "is_synthetic": valuation.is_synthetic,
+            },
+        )
+
+        db.commit()
+
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(
+            status_code=409,
+            detail="Unable to create this valuation.",
+        )
+
+    db.refresh(valuation)
     return valuation
 
 
 @router.get(
-    "/{collateral_id}/valuations",
+    "/{collateral_id}/valuations',
     response_model=list[ValuationRead],
 )
 def list_valuations(
