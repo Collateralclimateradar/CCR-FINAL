@@ -4,6 +4,7 @@
 import uuid
 from typing import Any
 
+from fastapi.encoders import jsonable_encoder
 from sqlalchemy.orm import Session
 
 from ccr.models import AuditLog
@@ -20,11 +21,10 @@ def record_audit_event(
     before_data: dict[str, Any] | None = None,
     after_data: dict[str, Any] | None = None,
 ) -> AuditLog:
-    """Add an audit event without committing the transaction.
+    """Add a JSON-safe audit event without committing the transaction.
 
     The caller must commit or roll back the business operation and audit
-    event together. Only pass explicitly selected, non-sensitive fields
-    in before_data and after_data.
+    event together. Only pass explicitly selected, non-sensitive fields.
     """
 
     event = AuditLog(
@@ -33,8 +33,8 @@ def record_audit_event(
         action=action,
         entity_type=entity_type,
         entity_id=str(entity_id),
-        before_data=before_data,
-        after_data=after_data,
+        before_data=jsonable_encoder(before_data),
+        after_data=jsonable_encoder(after_data),
     )
 
     db.add(event)
