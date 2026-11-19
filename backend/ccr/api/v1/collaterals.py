@@ -82,7 +82,7 @@ async def preview_collateral_import(
 
 
 @router.post(
-    "/import",
+    "/import',
     response_model=CollateralImportReport,
     status_code=200,
 )
@@ -374,7 +374,7 @@ def archive_collateral(
 
 
 @router.post(
-    "/{collateral_id}/restore',
+    "/{collateral_id}/restore",
     response_model=CollateralRead,
 )
 def restore_collateral(
@@ -450,7 +450,6 @@ def create_valuation(
     collateral = _get_collateral_or_404(
         db,
         org.id,
-        collateral_id,
     )
 
     valuation = Valuation(
@@ -494,7 +493,7 @@ def create_valuation(
 
 
 @router.get(
-    "/{collateral_id}/valuations',
+    "/{collateral_id}/valuations",
     response_model=list[ValuationRead],
 )
 def list_valuations(
