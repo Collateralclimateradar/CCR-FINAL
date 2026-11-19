@@ -1,3 +1,4 @@
+
 """Role-protected routes for organization collaterals and valuations."""
 
 import uuid
@@ -61,7 +62,7 @@ async def _read_csv_upload(file: UploadFile) -> bytes:
 
     if len(content) > MAX_UPLOAD_BYTES:
         raise HTTPException(
-            status_code=413,
+            status_code=422,
             detail="File too large. Maximum size is 10 MB.",
         )
 
@@ -69,7 +70,7 @@ async def _read_csv_upload(file: UploadFile) -> bytes:
 
 
 @router.post(
-    "/import/preview",
+    "/import/preview',
     response_model=CollateralImportPreview,
     status_code=200,
 )
@@ -98,7 +99,7 @@ async def preview_collateral_import(
 
 
 @router.post(
-    "/import",
+    "/import',
     response_model=CollateralImportReport,
     status_code=200,
 )
@@ -264,7 +265,7 @@ def list_collaterals(
 
 
 @router.get(
-    "/{collateral_id}",
+    "/{collateral_id}',
     response_model=CollateralRead,
 )
 def read_collateral(
@@ -284,7 +285,7 @@ def read_collateral(
 
 
 @router.patch(
-    "/{collateral_id}",
+    '/{collateral_id}',
     response_model=CollateralRead,
 )
 def update_collateral(
@@ -389,7 +390,7 @@ def update_collateral(
 
 
 @router.delete(
-    "/{collateral_id}",
+    '/{collateral_id}',
     response_model=CollateralRead,
 )
 def archive_collateral(
@@ -452,7 +453,7 @@ def archive_collateral(
 
 
 @router.post(
-    "/{collateral_id}/restore",
+    '/{collateral_id}/restore',
     response_model=CollateralRead,
 )
 def restore_collateral(
@@ -522,7 +523,7 @@ def restore_collateral(
 
 
 @router.post(
-    "/{collateral_id}/valuations",
+    '/{collateral_id}/valuations',
     response_model=ValuationRead,
     status_code=201,
 )
@@ -562,7 +563,6 @@ def create_valuation(
             entity_id=valuation.id,
             after_data={
                 "collateral_id": str(collateral.id),
-                # str() keeps Decimal/date values JSON-serializable
                 "value_amount": str(valuation.value_amount),
                 "currency": valuation.currency,
                 "valuation_date": str(valuation.valuation_date),
@@ -591,7 +591,7 @@ def create_valuation(
 
 
 @router.get(
-    "/{collateral_id}/valuations",
+    '/{collateral_id}/valuations',
     response_model=list[ValuationRead],
 )
 def list_valuations(
