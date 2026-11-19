@@ -518,3 +518,20 @@ def test_update_collateral_does_not_modify_valuation_history(client):
     assert history.status_code == 200
     assert len(history.json()) == 1
     assert history.json()[0]["value_amount"] == "1500000.00"
+
+
+def test_auth_headers_create_valid_authenticated_session(client):
+    org_id = make_org(client)
+
+    headers = make_auth_headers(client, org_id)
+
+    assert headers["Authorization"].startswith("Bearer ")
+
+    response = client.get(
+        "/api/v1/auth/me",
+        headers=headers,
+    )
+
+    assert response.status_code == 200
+    assert response.json()["email"].endswith("@example.com")
+    assert response.json()["role"] == "admin"
