@@ -1,7 +1,7 @@
 
 """Create climate risk assessments for bank collateral.
 
-Revision ID: 0005_create_climate_risk_assessments
+Revision ID: 0005_climate_risk
 Revises: 0004_create_audit_logs
 """
 
@@ -9,7 +9,7 @@ from alembic import op
 import sqlalchemy as sa
 
 
-revision = "0005_create_climate_risk_assessments"
+revision = "0005_climate_risk"
 down_revision = "0004_create_audit_logs"
 branch_labels = None
 depends_on = None
