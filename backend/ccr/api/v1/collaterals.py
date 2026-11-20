@@ -99,7 +99,7 @@ async def preview_collateral_import(
 
 
 @router.post(
-    "/import",
+    "/import',
     response_model=CollateralImportReport,
     status_code=200,
 )
