@@ -1,4 +1,3 @@
-
 """Role-protected routes for organization collaterals and valuations."""
 
 import uuid
@@ -54,7 +53,6 @@ EDITOR_ROLES = (UserRole.ADMIN, UserRole.ANALYST)
 
 MAX_UPLOAD_BYTES = 10 * 1024 * 1024
 
-
 async def _read_csv_upload(file: UploadFile) -> bytes:
     """Read an uploaded CSV, rejecting files over the size limit."""
 
@@ -68,9 +66,8 @@ async def _read_csv_upload(file: UploadFile) -> bytes:
 
     return content
 
-
 @router.post(
-    "/import/preview',
+    "/import/preview",
     response_model=CollateralImportPreview,
     status_code=200,
 )
@@ -97,9 +94,8 @@ async def preview_collateral_import(
     finally:
         await file.close()
 
-
 @router.post(
-    "/import',
+    "/import",
     response_model=CollateralImportReport,
     status_code=200,
 )
@@ -141,7 +137,6 @@ async def execute_collateral_csv_import(
     finally:
         await file.close()
 
-
 def _get_collateral_or_404(
     db: Session,
     organization_id: uuid.UUID,
@@ -168,7 +163,6 @@ def _get_collateral_or_404(
         )
 
     return collateral
-
 
 @router.post(
     "",
@@ -233,7 +227,6 @@ def create_collateral(
 
     return collateral
 
-
 @router.get(
     "",
     response_model=list[CollateralRead],
@@ -264,9 +257,8 @@ def list_collaterals(
 
     return db.scalars(stmt).all()
 
-
 @router.get(
-    "/{collateral_id}',
+    "/{collateral_id}",
     response_model=CollateralRead,
 )
 def read_collateral(
@@ -284,9 +276,8 @@ def read_collateral(
         include_archived=include_archived,
     )
 
-
 @router.patch(
-    '/{collateral_id}',
+    "/{collateral_id}",
     response_model=CollateralRead,
 )
 def update_collateral(
@@ -389,9 +380,8 @@ def update_collateral(
 
     return collateral
 
-
 @router.delete(
-    '/{collateral_id}',
+    "/{collateral_id}",
     response_model=CollateralRead,
 )
 def archive_collateral(
@@ -452,9 +442,8 @@ def archive_collateral(
 
     return collateral
 
-
 @router.post(
-    '/{collateral_id}/restore',
+    "/{collateral_id}/restore",
     response_model=CollateralRead,
 )
 def restore_collateral(
@@ -522,9 +511,8 @@ def restore_collateral(
 
     return collateral
 
-
 @router.post(
-    '/{collateral_id}/valuations',
+    "/{collateral_id}/valuations",
     response_model=ValuationRead,
     status_code=201,
 )
@@ -590,9 +578,8 @@ def create_valuation(
 
     return valuation
 
-
 @router.get(
-    '/{collateral_id}/valuations',
+    "/{collateral_id}/valuations",
     response_model=list[ValuationRead],
 )
 def list_valuations(
