@@ -1,4 +1,3 @@
-
 """Transactional persistence for validated collateral CSV imports."""
 
 import uuid
@@ -12,6 +11,7 @@ from ccr.schemas.collateral_import import (
     CollateralImportReport,
     ImportIssue,
 )
+from ccr.services.audit import record_audit_event
 from ccr.services.collateral_import import CSVValidationResult
 
 
@@ -23,12 +23,11 @@ def execute_collateral_import(
     db: Session,
     organization_id: uuid.UUID,
     validation_result: CSVValidationResult,
+    actor_user_id: uuid.UUID | None = None,
 ) -> CollateralImportReport:
     """
-    Persist valid CSV records for one organization in a single transaction.
-
-    Invalid CSV rows and existing external references are skipped.
-    Any database integrity conflict rolls back the entire import.
+    Persist valid CSV records and audit the operation
+    in the same database transaction.
     """
 
     preview = validation_result.preview
@@ -55,7 +54,6 @@ def execute_collateral_import(
     additional_issues = []
     existing_duplicate_count = 0
 
-    # Valid records correspond to valid preview rows in their original order.
     valid_rows = [
         row for row in preview.rows if row.is_valid
     ]
@@ -70,6 +68,7 @@ def execute_collateral_import(
 
         if external_ref in existing_refs:
             existing_duplicate_count += 1
+
             additional_issues.append(
                 ImportIssue(
                     row_number=row.row_number,
@@ -91,23 +90,50 @@ def execute_collateral_import(
             )
         )
 
-    try:
-        db.add_all(importable_records)
-        db.commit()
-    except IntegrityError as exc:
-        db.rollback()
-        raise CollateralImportConflict(
-            "The import conflicts with existing database records. "
-            "No records were imported."
-        ) from exc
-
     imported_count = len(importable_records)
-    skipped_count = preview.invalid_rows + existing_duplicate_count
+    skipped_count = (
+        preview.invalid_rows + existing_duplicate_count
+    )
 
-    return CollateralImportReport(
+    report = CollateralImportReport(
         total_rows=preview.total_rows,
         imported_rows=imported_count,
         skipped_rows=skipped_count,
         failed_rows=0,
         issues=preview.issues + additional_issues,
     )
+
+    try:
+        db.add_all(importable_records)
+        db.flush()
+
+        record_audit_event(
+            db,
+            organization_id=organization_id,
+            actor_user_id=actor_user_id,
+            action="collateral.imported",
+            entity_type="collateral_import",
+            entity_id=uuid.uuid4(),
+            after_data={
+                "total_rows": report.total_rows,
+                "imported_rows": report.imported_rows,
+                "skipped_rows": report.skipped_rows,
+                "failed_rows": report.failed_rows,
+            },
+        )
+
+        db.commit()
+
+    except IntegrityError as exc:
+        db.rollback()
+
+        raise CollateralImportConflict(
+            "The import conflicts with existing database records. "
+            "No records were imported."
+        ) from exc
+
+    except Exception:
+        db.rollback()
+        raise
+
+    return report
