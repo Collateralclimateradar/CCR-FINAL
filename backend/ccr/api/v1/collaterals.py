@@ -69,8 +69,8 @@ async def _read_csv_upload(file: UploadFile) -> bytes:
     return content
 
 
-@router.post(
-    "/import/preview',
+    @router.post(
+    "/import/preview",
     response_model=CollateralImportPreview,
     status_code=200,
 )
