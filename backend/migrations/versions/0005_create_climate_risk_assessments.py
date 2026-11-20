@@ -16,12 +16,12 @@ depends_on = None
 
 
 def upgrade() -> None:
-    # Required for the composite foreign key that enforces bank ownership.
-    op.create_unique_constraint(
-        "uq_collaterals_org_id_id",
-        "collaterals",
-        ["organization_id", "id"],
-    )
+    # SQLite requires batch mode to add a table-level unique constraint.
+    with op.batch_alter_table("collaterals") as batch_op:
+        batch_op.create_unique_constraint(
+            "uq_collaterals_org_id_id",
+            ["organization_id", "id"],
+        )
 
     op.create_table(
         "climate_risk_assessments",
@@ -79,7 +79,6 @@ def upgrade() -> None:
         "climate_risk_assessments",
         ["organization_id", "hazard_type", "assessment_date"],
     )
-
     op.create_index(
         "ix_climate_assessment_collateral",
         "climate_risk_assessments",
@@ -98,8 +97,8 @@ def downgrade() -> None:
     )
     op.drop_table("climate_risk_assessments")
 
-    op.drop_constraint(
-        "uq_collaterals_org_id_id",
-        "collaterals",
-        type_="unique",
-    )
+    with op.batch_alter_table("collaterals") as batch_op:
+        batch_op.drop_constraint(
+            "uq_collaterals_org_id_id",
+            type_="unique",
+        )
