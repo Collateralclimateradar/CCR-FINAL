@@ -266,7 +266,7 @@ def list_collaterals(
 
 
 @router.get(
-    "/{collateral_id}',
+    '/{collateral_id}',
     response_model=CollateralRead,
 )
 def read_collateral(
