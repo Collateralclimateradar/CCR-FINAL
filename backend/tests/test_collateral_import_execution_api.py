@@ -14,7 +14,7 @@ from ccr.core.security import hash_password
 from ccr.db.base import Base
 from ccr.db.session import get_db
 from ccr.main import app
-from ccr.models import Collateral, Organization, User
+from ccr.models import AuditLog, Collateral, Organization, User
 
 
 @pytest.fixture
@@ -358,3 +358,39 @@ def test_import_oversized_csv_returns_422(import_api_client):
 
     assert response.status_code == 422
     assert collateral_count(engine, organization_id) == 0
+
+
+def test_import_creates_audit_log_with_actor(import_api_client):
+    client, engine = import_api_client
+    organization_id, headers = create_organization(client)
+
+    csv_content = (
+        b"external_ref,property_type,is_synthetic\n"
+        b"C-900,villa,true\n"
+        b"C-901,apartment,false\n"
+    )
+
+    response = upload_csv(
+        client,
+        organization_id,
+        csv_content,
+        headers,
+    )
+
+    assert response.status_code == 200, response.text
+
+    with Session(engine) as db:
+        event = db.scalars(
+            select(AuditLog).where(
+                AuditLog.organization_id
+                == uuid.UUID(organization_id),
+                AuditLog.action
+                == "collateral.imported",
+            )
+        ).one()
+
+        assert event.actor_user_id is not None
+        assert event.entity_type == "collateral_import"
+        assert event.after_data["total_rows"] == 2
+        assert event.after_data["imported_rows"] == 2
+        assert event.after_data["skipped_rows"] == 0
