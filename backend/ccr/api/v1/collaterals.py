@@ -69,8 +69,8 @@ async def _read_csv_upload(file: UploadFile) -> bytes:
     return content
 
 
-    @router.post(
-    "/import/preview",
+@router.post(
+    "/import/preview',
     response_model=CollateralImportPreview,
     status_code=200,
 )
@@ -99,7 +99,7 @@ async def preview_collateral_import(
 
 
 @router.post(
-    '/import',
+    "/import",
     response_model=CollateralImportReport,
     status_code=200,
 )
@@ -266,7 +266,7 @@ def list_collaterals(
 
 
 @router.get(
-    '/{collateral_id}',
+    "/{collateral_id}',
     response_model=CollateralRead,
 )
 def read_collateral(
