@@ -16,6 +16,7 @@ DEFAULT_BASE_URL = "https://thinkhazard.org/en"
 DEFAULT_TIMEOUT = 15
 
 _HAZARD_CODE_PATTERN = re.compile(r"^[A-Z]{2,3}$")
+_DIVISION_CODE_PATTERN = re.compile(r"^[A-Z]{3}[A-Z0-9-]{0,29}$")
 
 
 class ThinkHazardClientError(Exception):
@@ -59,15 +60,31 @@ class ThinkHazardClient:
         self.timeout = float(timeout)
 
     @staticmethod
-    def _validate_division_code(division_code: int) -> int:
-        if (
-            isinstance(division_code, bool)
-            or not isinstance(division_code, int)
-            or division_code <= 0
-        ):
-            raise ValueError("division_code must be a positive integer.")
+    def _validate_division_code(division_code: int | str) -> int | str:
+        """Accept legacy numeric IDs and modern provider string codes."""
 
-        return division_code
+        if isinstance(division_code, bool):
+            raise ValueError(
+                "division_code must be a positive integer or valid provider code."
+            )
+
+        if isinstance(division_code, int):
+            if division_code <= 0:
+                raise ValueError(
+                    "division_code must be a positive integer or valid provider code."
+                )
+            return division_code
+
+        if isinstance(division_code, str):
+            if not _DIVISION_CODE_PATTERN.fullmatch(division_code):
+                raise ValueError(
+                    "division_code must be a positive integer or valid provider code."
+                )
+            return division_code
+
+        raise ValueError(
+            "division_code must be a positive integer or valid provider code."
+        )
 
     @staticmethod
     def _validate_hazard_type(hazard_type: str) -> str:
@@ -119,7 +136,10 @@ class ThinkHazardClient:
                 "ThinkHazard returned invalid JSON."
             ) from exc
 
-    def get_all_hazards(self, division_code: int) -> list[dict]:
+    def get_all_hazards(
+        self,
+        division_code: int | str,
+    ) -> list[dict]:
         """Retrieve all published hazard levels for one division."""
 
         code = self._validate_division_code(division_code)
@@ -160,7 +180,7 @@ class ThinkHazardClient:
 
     def get_hazard_report(
         self,
-        division_code: int,
+        division_code: int | str,
         hazard_type: str,
     ) -> dict:
         """Retrieve the detailed report for one division and hazard."""
@@ -212,11 +232,22 @@ class ThinkHazardClient:
                     "Each administrative division must be an object."
                 )
 
-            if (
-                isinstance(item.get("code"), bool)
-                or not isinstance(item.get("code"), int)
-                or item["code"] <= 0
-            ):
+            code = item.get("code")
+            valid_code = (
+                not isinstance(code, bool)
+                and (
+                    (
+                        isinstance(code, int)
+                        and code > 0
+                    )
+                    or (
+                        isinstance(code, str)
+                        and bool(_DIVISION_CODE_PATTERN.fullmatch(code))
+                    )
+                )
+            )
+
+            if not valid_code:
                 raise ThinkHazardResponseValidationError(
                     "Administrative division has an invalid code."
                 )
