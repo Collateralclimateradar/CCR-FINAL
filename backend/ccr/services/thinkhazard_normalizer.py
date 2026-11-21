@@ -1,6 +1,7 @@
 
 """Normalize ThinkHazard classifications into CCR climate results."""
 
+import re
 from datetime import datetime, timezone
 
 from ccr.services.climate_data_provider import (
@@ -14,6 +15,8 @@ from ccr.services.climate_data_provider import (
 
 
 SOURCE_NAME = "thinkhazard"
+
+_DIVISION_CODE_PATTERN = re.compile(r"^[A-Z]{3}[A-Z0-9-]{0,29}$")
 
 HAZARD_MAPPING = {
     "FL": ClimateHazard.FLOOD,
@@ -42,10 +45,31 @@ class ThinkHazardNormalizationError(Exception):
     """Raised when ThinkHazard data cannot be normalized safely."""
 
 
+def _validate_division_code(division_code: int | str) -> int | str:
+    """Accept legacy numeric IDs and modern provider string codes."""
+
+    if isinstance(division_code, bool):
+        raise ThinkHazardNormalizationError(
+            "division_code must be a positive integer or valid provider code."
+        )
+
+    if isinstance(division_code, int):
+        if division_code > 0:
+            return division_code
+
+    elif isinstance(division_code, str):
+        if _DIVISION_CODE_PATTERN.fullmatch(division_code):
+            return division_code
+
+    raise ThinkHazardNormalizationError(
+        "division_code must be a positive integer or valid provider code."
+    )
+
+
 def normalize_thinkhazard_results(
     payload: list[dict],
     *,
-    division_code: int,
+    division_code: int | str,
     latitude: float,
     longitude: float,
     retrieved_at: datetime | None = None,
@@ -62,14 +86,7 @@ def normalize_thinkhazard_results(
     classification is preserved in raw_category.
     """
 
-    if (
-        isinstance(division_code, bool)
-        or not isinstance(division_code, int)
-        or division_code <= 0
-    ):
-        raise ThinkHazardNormalizationError(
-            "division_code must be a positive integer."
-        )
+    code = _validate_division_code(division_code)
 
     try:
         lat, lon = validate_coordinates(latitude, longitude)
@@ -176,7 +193,7 @@ def normalize_thinkhazard_results(
             raw_category=data["raw_category"],
             reference_url=(
                 f"https://thinkhazard.org/en/report/"
-                f"{division_code}/{','.join(data['mnemonics'])}"
+                f"{code}/{','.join(data['mnemonics'])}"
             ),
         )
 
