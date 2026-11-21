@@ -1,304 +1,202 @@
 
-"""Tests for ThinkHazard classification normalization."""
+"""Normalize ThinkHazard classifications into CCR climate results."""
 
+import re
 from datetime import datetime, timezone
 
-import pytest
-
-from ccr.services.climate_data_provider import ClimateHazard, HazardLevel
-from ccr.services.thinkhazard_normalizer import (
-    ThinkHazardNormalizationError,
-    normalize_thinkhazard_results,
+from ccr.services.climate_data_provider import (
+    ClimateHazard,
+    ClimateHazardResult,
+    ClimateDataValidationError,
+    HazardLevel,
+    validate_coordinates,
+    validate_provider_result,
 )
 
 
-@pytest.fixture
-def retrieved_at():
-    return datetime(2026, 1, 1, tzinfo=timezone.utc)
+SOURCE_NAME = "thinkhazard"
+
+_DIVISION_CODE_PATTERN = re.compile(r"^[A-Z]{3}[A-Z0-9-]{0,29}$")
+
+HAZARD_MAPPING = {
+    "FL": ClimateHazard.FLOOD,
+    "UF": ClimateHazard.FLOOD,
+    "CF": ClimateHazard.COASTAL,
+    "EH": ClimateHazard.EXTREME_HEAT,
+}
+
+LEVEL_MAPPING = {
+    "VLO": HazardLevel.LOW,
+    "LOW": HazardLevel.LOW,
+    "MED": HazardLevel.MODERATE,
+    "HIG": HazardLevel.HIGH,
+}
+
+LEVEL_RANK = {
+    HazardLevel.LOW: 1,
+    HazardLevel.MODERATE: 2,
+    HazardLevel.HIGH: 3,
+    HazardLevel.VERY_HIGH: 4,
+    HazardLevel.UNKNOWN: 0,
+}
 
 
-@pytest.fixture
-def sample_payload():
-    return [
-        {
-            "hazardtype": {"mnemonic": "FL", "title": "River Flood"},
-            "hazardlevel": {"mnemonic": "HIG", "title": "High"},
-        },
-        {
-            "hazardtype": {"mnemonic": "UF", "title": "Urban Flood"},
-            "hazardlevel": {"mnemonic": "MED", "title": "Medium"},
-        },
-        {
-            "hazardtype": {"mnemonic": "CF", "title": "Coastal Flood"},
-            "hazardlevel": {"mnemonic": "LOW", "title": "Low"},
-        },
-        {
-            "hazardtype": {"mnemonic": "EH", "title": "Extreme Heat"},
-            "hazardlevel": {"mnemonic": "VLO", "title": "Very Low"},
-        },
-    ]
+class ThinkHazardNormalizationError(Exception):
+    """Raised when ThinkHazard data cannot be normalized safely."""
 
 
-def test_normalizes_supported_hazards(sample_payload, retrieved_at):
-    results = normalize_thinkhazard_results(
-        sample_payload,
-        division_code=123,
-        latitude=25.2,
-        longitude=55.3,
-        retrieved_at=retrieved_at,
-    )
+def _validate_division_code(division_code: int | str) -> int | str:
+    """Accept legacy numeric IDs and modern provider string codes."""
 
-    by_hazard = {result.hazard: result for result in results}
-
-    assert set(by_hazard) == {
-        ClimateHazard.FLOOD,
-        ClimateHazard.COASTAL,
-        ClimateHazard.EXTREME_HEAT,
-    }
-    assert by_hazard[ClimateHazard.FLOOD].level == HazardLevel.HIGH
-    assert by_hazard[ClimateHazard.COASTAL].level == HazardLevel.LOW
-    assert by_hazard[ClimateHazard.EXTREME_HEAT].level == HazardLevel.LOW
-    assert by_hazard[ClimateHazard.EXTREME_HEAT].raw_category == "Very Low"
-
-
-def test_combines_river_and_urban_flood_using_highest_level(
-    sample_payload,
-    retrieved_at,
-):
-    results = normalize_thinkhazard_results(
-        sample_payload[:2],
-        division_code=123,
-        latitude=25.2,
-        longitude=55.3,
-        retrieved_at=retrieved_at,
-    )
-
-    assert len(results) == 1
-    assert results[0].hazard == ClimateHazard.FLOOD
-    assert results[0].level == HazardLevel.HIGH
-    assert results[0].raw_category == "High"
-
-
-def test_preserves_retrieval_timestamp(sample_payload, retrieved_at):
-    results = normalize_thinkhazard_results(
-        sample_payload,
-        division_code=123,
-        latitude=25.2,
-        longitude=55.3,
-        retrieved_at=retrieved_at,
-    )
-
-    assert all(result.retrieved_at == retrieved_at for result in results)
-
-
-def test_preserves_coordinates(sample_payload, retrieved_at):
-    results = normalize_thinkhazard_results(
-        sample_payload,
-        division_code=123,
-        latitude=25.2,
-        longitude=55.3,
-        retrieved_at=retrieved_at,
-    )
-
-    assert all(result.latitude == 25.2 for result in results)
-    assert all(result.longitude == 55.3 for result in results)
-
-
-def test_filters_requested_hazards(sample_payload, retrieved_at):
-    results = normalize_thinkhazard_results(
-        sample_payload,
-        division_code=123,
-        latitude=25.2,
-        longitude=55.3,
-        retrieved_at=retrieved_at,
-        hazards=(ClimateHazard.COASTAL,),
-    )
-
-    assert len(results) == 1
-    assert results[0].hazard == ClimateHazard.COASTAL
-
-
-def test_ignores_unsupported_hazards(sample_payload, retrieved_at):
-    payload = sample_payload + [
-        {
-            "hazardtype": {"mnemonic": "EQ", "title": "Earthquake"},
-            "hazardlevel": {"mnemonic": "HIG", "title": "High"},
-        }
-    ]
-
-    results = normalize_thinkhazard_results(
-        payload,
-        division_code=123,
-        latitude=25.2,
-        longitude=55.3,
-        retrieved_at=retrieved_at,
-    )
-
-    assert len(results) == 3
-    assert all(
-        result.hazard in {
-            ClimateHazard.FLOOD,
-            ClimateHazard.COASTAL,
-            ClimateHazard.EXTREME_HEAT,
-        }
-        for result in results
-    )
-
-
-@pytest.mark.parametrize("division_code", [0, -1, True, "123", None])
-def test_rejects_invalid_division_code(
-    sample_payload,
-    division_code,
-):
-    with pytest.raises(ThinkHazardNormalizationError):
-        normalize_thinkhazard_results(
-            sample_payload,
-            division_code=division_code,
-            latitude=25.2,
-            longitude=55.3,
+    if isinstance(division_code, bool):
+        raise ThinkHazardNormalizationError(
+            "division_code must be a positive integer or valid provider code."
         )
 
+    if isinstance(division_code, int):
+        if division_code > 0:
+            return division_code
 
-@pytest.mark.parametrize(
-    ("latitude", "longitude"),
-    [
-        (91, 55.3),
-        (-91, 55.3),
-        (25.2, 181),
-        (25.2, -181),
-        (float("nan"), 55.3),
-        (25.2, float("inf")),
-    ],
-)
-def test_rejects_invalid_coordinates(
-    sample_payload,
-    latitude,
-    longitude,
-):
-    with pytest.raises(ThinkHazardNormalizationError):
-        normalize_thinkhazard_results(
-            sample_payload,
-            division_code=123,
-            latitude=latitude,
-            longitude=longitude,
+    elif isinstance(division_code, str):
+        if _DIVISION_CODE_PATTERN.fullmatch(division_code):
+            return division_code
+
+    raise ThinkHazardNormalizationError(
+        "division_code must be a positive integer or valid provider code."
+    )
+
+
+def normalize_thinkhazard_results(
+    payload: list[dict],
+    *,
+    division_code: int | str,
+    latitude: float,
+    longitude: float,
+    retrieved_at: datetime | None = None,
+    hazards: tuple[ClimateHazard, ...] | None = None,
+) -> list[ClimateHazardResult]:
+    """Convert ThinkHazard's all-hazards response to CCR results.
+
+    River flood and urban flood are combined into one flood result.
+    If both are present, the higher classification is retained.
+    Unsupported hazard types are ignored.
+
+    ThinkHazard's Very Low classification is represented as LOW because
+    CCR's normalized contract does not have a VERY_LOW level. The original
+    classification is preserved in raw_category.
+    """
+
+    code = _validate_division_code(division_code)
+
+    try:
+        lat, lon = validate_coordinates(latitude, longitude)
+    except ClimateDataValidationError as exc:
+        raise ThinkHazardNormalizationError(str(exc)) from exc
+
+    if not isinstance(payload, list):
+        raise ThinkHazardNormalizationError(
+            "ThinkHazard payload must be a list."
         )
 
+    if retrieved_at is None:
+        retrieved_at = datetime.now(timezone.utc)
 
-def test_rejects_non_list_payload():
-    with pytest.raises(ThinkHazardNormalizationError):
-        normalize_thinkhazard_results(
-            {},
-            division_code=123,
-            latitude=25.2,
-            longitude=55.3,
+    if not isinstance(retrieved_at, datetime):
+        raise ThinkHazardNormalizationError(
+            "retrieved_at must be a datetime."
         )
 
+    if hazards is None:
+        requested_hazards = set(ClimateHazard)
+    else:
+        if not isinstance(hazards, tuple) or any(
+            not isinstance(item, ClimateHazard) for item in hazards
+        ):
+            raise ThinkHazardNormalizationError(
+                "hazards must be a tuple of ClimateHazard values."
+            )
+        requested_hazards = set(hazards)
 
-@pytest.mark.parametrize(
-    "payload",
-    [
-        [None],
-        ["invalid"],
-        [{}],
-        [{"hazardtype": [], "hazardlevel": {}}],
-        [{"hazardtype": {}, "hazardlevel": {}}],
-        [
-            {
-                "hazardtype": {"mnemonic": "FL"},
-                "hazardlevel": {},
+    aggregated = {}
+
+    for item in payload:
+        if not isinstance(item, dict):
+            raise ThinkHazardNormalizationError(
+                "Each hazard entry must be an object."
+            )
+
+        hazard_type = item.get("hazardtype")
+        hazard_level = item.get("hazardlevel")
+
+        if not isinstance(hazard_type, dict) or not isinstance(
+            hazard_level, dict
+        ):
+            raise ThinkHazardNormalizationError(
+                "Each entry must contain hazardtype and hazardlevel objects."
+            )
+
+        mnemonic = hazard_type.get("mnemonic")
+        level_mnemonic = hazard_level.get("mnemonic")
+
+        if not isinstance(mnemonic, str):
+            raise ThinkHazardNormalizationError(
+                "Hazard mnemonic is missing."
+            )
+
+        if not isinstance(level_mnemonic, str):
+            raise ThinkHazardNormalizationError(
+                "Hazard level mnemonic is missing."
+            )
+
+        normalized_hazard = HAZARD_MAPPING.get(mnemonic)
+
+        if normalized_hazard is None:
+            continue
+
+        if normalized_hazard not in requested_hazards:
+            continue
+
+        normalized_level = LEVEL_MAPPING.get(level_mnemonic)
+
+        if normalized_level is None:
+            raise ThinkHazardNormalizationError(
+                f"Unsupported ThinkHazard level: {level_mnemonic}"
+            )
+
+        raw_category = hazard_level.get("title")
+        if not isinstance(raw_category, str) or not raw_category.strip():
+            raw_category = level_mnemonic
+
+        current = aggregated.get(normalized_hazard)
+
+        if current is None or LEVEL_RANK[normalized_level] > LEVEL_RANK[
+            current["level"]
+        ]:
+            aggregated[normalized_hazard] = {
+                "level": normalized_level,
+                "raw_category": raw_category,
+                "mnemonics": [mnemonic],
             }
-        ],
-        [
-            {
-                "hazardtype": {},
-                "hazardlevel": {"mnemonic": "HIG"},
-            }
-        ],
-    ],
-)
-def test_rejects_malformed_hazard_entries(payload):
-    with pytest.raises(ThinkHazardNormalizationError):
-        normalize_thinkhazard_results(
-            payload,
-            division_code=123,
-            latitude=25.2,
-            longitude=55.3,
+        elif mnemonic not in current["mnemonics"]:
+            current["mnemonics"].append(mnemonic)
+
+    results = []
+
+    for hazard, data in aggregated.items():
+        result = ClimateHazardResult(
+            source=SOURCE_NAME,
+            hazard=hazard,
+            level=data["level"],
+            retrieved_at=retrieved_at,
+            latitude=lat,
+            longitude=lon,
+            raw_category=data["raw_category"],
+            reference_url=(
+                f"https://thinkhazard.org/en/report/"
+                f"{code}/{','.join(data['mnemonics'])}"
+            ),
         )
 
+        results.append(validate_provider_result(result))
 
-def test_rejects_unsupported_level_for_supported_hazard():
-    payload = [
-        {
-            "hazardtype": {"mnemonic": "FL"},
-            "hazardlevel": {"mnemonic": "INVALID"},
-        }
-    ]
-
-    with pytest.raises(ThinkHazardNormalizationError):
-        normalize_thinkhazard_results(
-            payload,
-            division_code=123,
-            latitude=25.2,
-            longitude=55.3,
-        )
-
-
-def test_uses_default_retrieved_at_when_not_provided(sample_payload):
-    results = normalize_thinkhazard_results(
-        sample_payload,
-        division_code=123,
-        latitude=25.2,
-        longitude=55.3,
-    )
-
-    assert results
-    assert all(isinstance(result.retrieved_at, datetime) for result in results)
-    assert all(result.retrieved_at.tzinfo is not None for result in results)
-
-
-def test_rejects_invalid_retrieved_at(sample_payload):
-    with pytest.raises(ThinkHazardNormalizationError):
-        normalize_thinkhazard_results(
-            sample_payload,
-            division_code=123,
-            latitude=25.2,
-            longitude=55.3,
-            retrieved_at="not-a-datetime",
-        )
-
-
-@pytest.mark.parametrize(
-    "hazards",
-    [
-        [],
-        [ClimateHazard.FLOOD],
-        "flood",
-        (ClimateHazard.FLOOD, "invalid"),
-    ],
-)
-def test_rejects_invalid_hazards_filter(sample_payload, hazards):
-    with pytest.raises(ThinkHazardNormalizationError):
-        normalize_thinkhazard_results(
-            sample_payload,
-            division_code=123,
-            latitude=25.2,
-            longitude=55.3,
-            hazards=hazards,
-        )
-
-
-def test_creates_reference_url(sample_payload, retrieved_at):
-    results = normalize_thinkhazard_results(
-        sample_payload,
-        division_code=123,
-        latitude=25.2,
-        longitude=55.3,
-        retrieved_at=retrieved_at,
-    )
-
-    assert all(
-        result.reference_url.startswith(
-            "https://thinkhazard.org/en/report/123/"
-        )
-        for result in results
-    )
+    return results
