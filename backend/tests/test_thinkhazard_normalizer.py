@@ -58,12 +58,7 @@ def test_normalizes_supported_hazards(sample_payload, retrieved_at):
     assert by_hazard[ClimateHazard.FLOOD].level == HazardLevel.HIGH
     assert by_hazard[ClimateHazard.COASTAL].level == HazardLevel.LOW
     assert by_hazard[ClimateHazard.EXTREME_HEAT].level == HazardLevel.LOW
-
-    # The original ThinkHazard "Very Low" label must remain preserved.
-    assert (
-        by_hazard[ClimateHazard.EXTREME_HEAT].raw_category
-        == "Very Low"
-    )
+    assert by_hazard[ClimateHazard.EXTREME_HEAT].raw_category == "Very Low"
 
 
 def test_combines_river_and_urban_flood_using_highest_level(
@@ -110,7 +105,7 @@ def test_preserves_coordinates(sample_payload, retrieved_at):
 
 
 def test_filters_requested_hazards(sample_payload, retrieved_at):
-    results = normalize_thazard_results(
+    results = normalize_thinkhazard_results(
         sample_payload,
         division_code=123,
         latitude=25.2,
