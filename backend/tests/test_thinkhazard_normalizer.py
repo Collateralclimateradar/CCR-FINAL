@@ -59,6 +59,12 @@ def test_normalizes_supported_hazards(sample_payload, retrieved_at):
     assert by_hazard[ClimateHazard.COASTAL].level == HazardLevel.LOW
     assert by_hazard[ClimateHazard.EXTREME_HEAT].level == HazardLevel.LOW
 
+    # The original ThinkHazard "Very Low" label must remain preserved.
+    assert (
+        by_hazard[ClimateHazard.EXTREME_HEAT].raw_category
+        == "Very Low"
+    )
+
 
 def test_combines_river_and_urban_flood_using_highest_level(
     sample_payload,
@@ -104,7 +110,7 @@ def test_preserves_coordinates(sample_payload, retrieved_at):
 
 
 def test_filters_requested_hazards(sample_payload, retrieved_at):
-    results = normalize_thinkhazard_results(
+    results = normalize_thazard_results(
         sample_payload,
         division_code=123,
         latitude=25.2,
@@ -133,11 +139,15 @@ def test_ignores_unsupported_hazards(sample_payload, retrieved_at):
         retrieved_at=retrieved_at,
     )
 
+    assert len(results) == 3
     assert all(
-        result.hazard != ClimateHazard.UNKNOWN
+        result.hazard in {
+            ClimateHazard.FLOOD,
+            ClimateHazard.COASTAL,
+            ClimateHazard.EXTREME_HEAT,
+        }
         for result in results
     )
-    assert len(results) == 3
 
 
 @pytest.mark.parametrize("division_code", [0, -1, True, "123", None])
