@@ -6,10 +6,16 @@ A concrete resolver must use an authoritative boundary dataset or service and
 return the matching provider division code.
 """
 
+import re
 from dataclasses import dataclass
 from typing import Protocol
 
 from ccr.services.climate_data_provider import validate_coordinates
+
+
+_PROVIDER_DIVISION_CODE_PATTERN = re.compile(
+    r"^[A-Z]{3}[A-Z0-9-]{0,29}$"
+)
 
 
 class AdministrativeDivisionResolutionError(Exception):
@@ -32,7 +38,7 @@ class AdministrativeDivisionValidationError(
 class AdministrativeDivision:
     """An administrative area and the code accepted by a hazard provider."""
 
-    code: int
+    code: int | str
     name: str
     country: str
     admin1: str | None = None
@@ -56,6 +62,21 @@ class AdministrativeDivisionResolver(Protocol):
         ...
 
 
+def _is_valid_division_code(code: object) -> bool:
+    """Accept legacy numeric IDs and modern ThinkHazard string codes."""
+
+    if isinstance(code, bool):
+        return False
+
+    if isinstance(code, int):
+        return code > 0
+
+    if isinstance(code, str):
+        return bool(_PROVIDER_DIVISION_CODE_PATTERN.fullmatch(code))
+
+    return False
+
+
 def validate_administrative_division(
     division: AdministrativeDivision,
 ) -> AdministrativeDivision:
@@ -66,13 +87,10 @@ def validate_administrative_division(
             "Resolver must return an AdministrativeDivision."
         )
 
-    if (
-        isinstance(division.code, bool)
-        or not isinstance(division.code, int)
-        or division.code <= 0
-    ):
+    if not _is_valid_division_code(division.code):
         raise AdministrativeDivisionValidationError(
-            "Administrative division code must be a positive integer."
+            "Administrative division code must be a positive integer "
+            "or a valid uppercase provider code."
         )
 
     for field_name in ("name", "country"):
