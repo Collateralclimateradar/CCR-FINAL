@@ -1,4 +1,3 @@
-
 """ThinkHazard implementation of the CCR climate data provider contract.
 
 This adapter connects:
@@ -12,6 +11,7 @@ It does not calculate property-level risk or financial losses.
 from ccr.services.administrative_division import (
     AdministrativeDivisionNotFoundError,
     AdministrativeDivisionResolutionError,
+    AdministrativeDivisionValidationError,
     AdministrativeDivisionResolver,
     validate_administrative_division,
 )
@@ -93,14 +93,20 @@ class ThinkHazardProvider(ClimateDataProvider):
                 "No supported ThinkHazard administrative division "
                 "was found for this location."
             ) from exc
-        except AdministrativeDivisionResolutionError as exc:
+        except AdministrativeDivisionValidationError as exc:
             raise ClimateDataValidationError(
-                "Administrative division resolution failed."
+                "The administrative division resolver returned "
+                "invalid data."
+            ) from exc
+        except AdministrativeDivisionResolutionError as exc:
+            raise ClimateDataUnavailableError(
+                "The administrative division service is unavailable "
+                "or could not resolve this location."
             ) from exc
 
         try:
             division = validate_administrative_division(division)
-        except AdministrativeDivisionResolutionError as exc:
+        except AdministrativeDivisionValidationError as exc:
             raise ClimateDataValidationError(
                 "The administrative division resolver returned "
                 "invalid data."
