@@ -58,6 +58,12 @@ class Collateral(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         nullable=False,
     )
 
+    # Optional bank-internal reference identifying the property owner.
+    owner_reference: Mapped[str | None] = mapped_column(
+        String(100),
+        nullable=True,
+    )
+
     property_type: Mapped[str] = mapped_column(
         String(50),
         nullable=False,
