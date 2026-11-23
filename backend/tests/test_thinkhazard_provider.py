@@ -1,3 +1,4 @@
+
 """Tests for the ThinkHazard climate data provider adapter."""
 
 from datetime import datetime, timezone
@@ -287,7 +288,7 @@ def test_handles_resolver_failure(client):
     )
     provider = make_provider(client, resolver)
 
-    with pytest.raises(ClimateDataValidationError):
+    with pytest.raises(ClimateDataUnavailableError):
         provider.assess_location(
             latitude=LATITUDE,
             longitude=LONGITUDE,
