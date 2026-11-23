@@ -1,4 +1,3 @@
-
 """Pydantic schemas for collateral records."""
 
 import uuid
@@ -31,11 +30,17 @@ Place = Annotated[
     StringConstraints(strip_whitespace=True, min_length=1, max_length=100),
 ]
 
+OwnerReference = Annotated[
+    str,
+    StringConstraints(strip_whitespace=True, min_length=1, max_length=100),
+]
+
 
 class CollateralCreate(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     external_ref: Ref
+    owner_reference: OwnerReference | None = None
     property_type: PropertyType
     description: str | None = None
     country_code: str | None = Field(default=None, pattern=r"^[A-Z]{2}$")
@@ -74,6 +79,7 @@ class CollateralUpdate(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     external_ref: Ref | None = None
+    owner_reference: OwnerReference | None = None
     property_type: PropertyType | None = None
     description: str | None = None
     country_code: str | None = Field(default=None, pattern=r"^[A-Z]{2}$")
@@ -116,6 +122,7 @@ class CollateralRead(BaseModel):
     id: uuid.UUID
     organization_id: uuid.UUID
     external_ref: str
+    owner_reference: str | None
     property_type: str
     description: str | None
     country_code: str | None
