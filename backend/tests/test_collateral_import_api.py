@@ -1,4 +1,3 @@
-
 """API tests for authenticated collateral CSV preview uploads."""
 
 import uuid
@@ -90,6 +89,13 @@ def preview_url(organization_id):
     return (
         f"/api/v1/organizations/{organization_id}"
         "/collaterals/import/preview"
+    )
+
+
+def import_url(organization_id):
+    return (
+        f"/api/v1/organizations/{organization_id}"
+        "/collaterals/import"
     )
 
 
@@ -356,5 +362,148 @@ def test_preview_malformed_csv_returns_422():
 
             assert response.status_code == 422
             assert "detail" in response.json()
+    finally:
+        cleanup_test_app(engine)
+
+
+def test_preview_accepts_owner_reference():
+    client, engine = setup_test_app()
+
+    try:
+        with client:
+            organization_id, headers = create_organization(client)
+
+            csv_content = (
+                b"external_ref,owner_reference,"
+                b"property_type,is_synthetic\n"
+                b"C-OWNER-001,OWNER-001,villa,true\n"
+            )
+
+            response = upload_csv(
+                client,
+                preview_url(organization_id),
+                csv_content,
+                headers,
+            )
+
+            assert response.status_code == 200, response.text
+
+            data = response.json()
+
+            assert data["total_rows"] == 1
+            assert data["valid_rows"] == 1
+            assert data["invalid_rows"] == 0
+            assert data["rows"][0]["is_valid"] is True
+
+            # Preview must not persist the collateral.
+            with Session(engine) as session:
+                collateral_count = session.scalar(
+                    select(func.count()).select_from(Collateral)
+                )
+
+            assert collateral_count == 0
+    finally:
+        cleanup_test_app(engine)
+
+
+def test_preview_rejects_owner_reference_over_100_characters():
+    client, engine = setup_test_app()
+
+    try:
+        with client:
+            organization_id, headers = create_organization(client)
+
+            long_owner_reference = "O" * 101
+
+            csv_content = (
+                "external_ref,owner_reference,"
+                "property_type,is_synthetic\n"
+                f"C-OWNER-002,{long_owner_reference},villa,true\n"
+            ).encode("utf-8")
+
+            response = upload_csv(
+                client,
+                preview_url(organization_id),
+                csv_content,
+                headers,
+            )
+
+            assert response.status_code == 200, response.text
+
+            data = response.json()
+
+            assert data["total_rows"] == 1
+            assert data["valid_rows"] == 0
+            assert data["invalid_rows"] == 1
+            assert data["rows"][0]["is_valid"] is False
+
+            owner_reference_issues = [
+                issue
+                for issue in data["rows"][0]["issues"]
+                if issue["field"] == "owner_reference"
+            ]
+
+            assert owner_reference_issues
+    finally:
+        cleanup_test_app(engine)
+
+
+def test_api_import_persists_owner_reference_and_blank_as_null():
+    client, engine = setup_test_app()
+
+    try:
+        with client:
+            organization_id, headers = create_organization(client)
+
+            csv_content = (
+                b"external_ref,owner_reference,"
+                b"property_type,is_synthetic\n"
+                b"C-IMPORT-001,OWNER-001,villa,true\n"
+                b"C-IMPORT-002,,apartment,false\n"
+            )
+
+            response = upload_csv(
+                client,
+                import_url(organization_id),
+                csv_content,
+                headers,
+            )
+
+            assert response.status_code == 200, response.text
+
+            report = response.json()
+
+            assert report["total_rows"] == 2
+            assert report["imported_rows"] == 2
+            assert report["skipped_rows"] == 0
+            assert report["failed_rows"] == 0
+
+            with Session(engine) as session:
+                imported_collaterals = session.scalars(
+                    select(Collateral).where(
+                        Collateral.organization_id
+                        == uuid.UUID(organization_id),
+                        Collateral.external_ref.in_(
+                            ["C-IMPORT-001", "C-IMPORT-002"]
+                        ),
+                    )
+                ).all()
+
+                by_external_ref = {
+                    collateral.external_ref: collateral
+                    for collateral in imported_collaterals
+                }
+
+            assert len(by_external_ref) == 2
+
+            assert (
+                by_external_ref["C-IMPORT-001"].owner_reference
+                == "OWNER-001"
+            )
+
+            assert (
+                by_external_ref["C-IMPORT-002"].owner_reference
+                is None
+            )
     finally:
         cleanup_test_app(engine)
