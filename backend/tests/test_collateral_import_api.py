@@ -507,3 +507,88 @@ def test_api_import_persists_owner_reference_and_blank_as_null():
             )
     finally:
         cleanup_test_app(engine)
+def test_api_import_skips_existing_external_ref_without_overwriting():
+    client, engine = setup_test_app()
+
+    try:
+        with client:
+            organization_id, headers = create_organization(client)
+
+            organization_uuid = uuid.UUID(organization_id)
+
+            # Create a collateral that already exists.
+            with Session(engine) as session:
+                existing = Collateral(
+                    organization_id=organization_uuid,
+                    external_ref="C-EXISTING-001",
+                    owner_reference="OWNER-ORIGINAL",
+                    property_type="villa",
+                    is_synthetic=True,
+                )
+                session.add(existing)
+                session.commit()
+
+            csv_content = (
+                b"external_ref,owner_reference,"
+                b"property_type,is_synthetic\n"
+                b"C-EXISTING-001,OWNER-CHANGED,apartment,false\n"
+                b"C-NEW-001,OWNER-NEW,villa,true\n"
+            )
+
+            response = upload_csv(
+                client,
+                import_url(organization_id),
+                csv_content,
+                headers,
+            )
+
+            assert response.status_code == 200, response.text
+
+            report = response.json()
+
+            assert report["total_rows"] == 2
+            assert report["imported_rows"] == 1
+            assert report["skipped_rows"] == 1
+            assert report["failed_rows"] == 0
+
+            assert any(
+                issue["code"] == "EXTERNAL_REF_ALREADY_EXISTS"
+                for issue in report["issues"]
+            )
+
+            with Session(engine) as session:
+                collaterals = session.scalars(
+                    select(Collateral).where(
+                        Collateral.organization_id == organization_uuid
+                    )
+                ).all()
+
+                by_external_ref = {
+                    collateral.external_ref: collateral
+                    for collateral in collaterals
+                }
+
+            # Existing record must remain unchanged.
+            assert (
+                by_external_ref["C-EXISTING-001"].owner_reference
+                == "OWNER-ORIGINAL"
+            )
+
+            assert (
+                by_external_ref["C-EXISTING-001"].property_type
+                == "villa"
+            )
+
+            # New record must be imported.
+            assert "C-NEW-001" in by_external_ref
+
+            assert (
+                by_external_ref["C-NEW-001"].owner_reference
+                == "OWNER-NEW"
+            )
+
+            # Exactly two records: the original and the new one.
+            assert len(by_external_ref) == 2
+
+    finally:
+        cleanup_test_app(engine)
