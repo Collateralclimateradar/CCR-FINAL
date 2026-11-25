@@ -1179,4 +1179,5 @@ def test_create_collateral_audit_includes_owner_reference(client):
         assert events[0].after_data["owner_reference"] == "OWN-AUDIT-1"
 
 
-def test_update_collateral_aud
+
+
