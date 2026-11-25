@@ -1,4 +1,3 @@
-
 """Tests for the development routes: organizations, collaterals, valuations."""
 import pytest
 import uuid
@@ -1022,9 +1021,162 @@ def test_create_collateral_records_audit_event(client):
         assert event.before_data is None
         assert event.after_data == {
             "external_ref": "AUDIT-CREATE-001",
+            "owner_reference": None,
             "property_type": "villa",
             "country_code": "AE",
             "region": "Dubai",
             "city": None,
             "is_synthetic": True,
         }
+
+
+def test_owner_reference_is_optional_and_defaults_to_null(client):
+    org_id = make_org(client)
+    col_id = make_collateral(client, org_id)
+
+    response = client.get(
+        f"/api/v1/organizations/{org_id}/collaterals/{col_id}"
+    )
+
+    assert response.status_code == 200
+    assert response.json()["owner_reference"] is None
+
+
+def test_create_collateral_with_owner_reference(client):
+    org_id = make_org(client)
+    col_id = make_collateral(
+        client,
+        org_id,
+        external_ref="OWNER-REF-001",
+        owner_reference="  OWN-1001  ",
+    )
+
+    base_url = f"/api/v1/organizations/{org_id}/collaterals"
+
+    detail = client.get(f"{base_url}/{col_id}")
+    assert detail.status_code == 200
+    assert detail.json()["owner_reference"] == "OWN-1001"
+
+    listing = client.get(base_url)
+    assert listing.status_code == 200
+    assert listing.json()[0]["owner_reference"] == "OWN-1001"
+
+
+def test_owner_reference_length_and_blank_validation_on_create(client):
+    org_id = make_org(client)
+    base_url = f"/api/v1/organizations/{org_id}/collaterals"
+
+    exactly_100 = "R" * 100
+    accepted = client.post(
+        base_url,
+        json={
+            **COLLATERAL,
+            "external_ref": "OWNER-LEN-100",
+            "owner_reference": exactly_100,
+        },
+    )
+    assert accepted.status_code == 201, accepted.text
+    assert accepted.json()["owner_reference"] == exactly_100
+
+    for index, bad_value in enumerate(["R" * 101, "", "   "]):
+        rejected = client.post(
+            base_url,
+            json={
+                **COLLATERAL,
+                "external_ref": f"OWNER-BAD-{index}",
+                "owner_reference": bad_value,
+            },
+        )
+        assert rejected.status_code == 422, (
+            f"value {bad_value!r}: {rejected.text}"
+        )
+
+
+def test_update_owner_reference_set_change_and_clear(client):
+    org_id = make_org(client)
+    col_id = make_collateral(client, org_id)
+
+    url = f"/api/v1/organizations/{org_id}/collaterals/{col_id}"
+
+    set_response = client.patch(
+        url,
+        json={"owner_reference": "OWN-2001"},
+    )
+    assert set_response.status_code == 200, set_response.text
+    assert set_response.json()["owner_reference"] == "OWN-2001"
+    assert set_response.json()["external_ref"] == "C-001"
+
+    changed = client.patch(
+        url,
+        json={"owner_reference": "OWN-2002"},
+    )
+    assert changed.status_code == 200, changed.text
+    assert changed.json()["owner_reference"] == "OWN-2002"
+
+    # An unrelated update must not touch owner_reference.
+    unrelated = client.patch(url, json={"city": "Abu Dhabi"})
+    assert unrelated.status_code == 200, unrelated.text
+    assert unrelated.json()["owner_reference"] == "OWN-2002"
+
+    cleared = client.patch(url, json={"owner_reference": None})
+    assert cleared.status_code == 200, cleared.text
+    assert cleared.json()["owner_reference"] is None
+
+    persisted = client.get(url)
+    assert persisted.status_code == 200
+    assert persisted.json()["owner_reference"] is None
+
+
+def test_update_owner_reference_rejects_invalid_values(client):
+    org_id = make_org(client)
+    col_id = make_collateral(
+        client,
+        org_id,
+        owner_reference="OWN-KEEP",
+    )
+
+    url = f"/api/v1/organizations/{org_id}/collaterals/{col_id}"
+
+    for bad_value in ["R" * 101, "", "   "]:
+        response = client.patch(
+            url,
+            json={"owner_reference": bad_value},
+        )
+        assert response.status_code == 422, (
+            f"value {bad_value!r}: {response.text}"
+        )
+
+    unchanged = client.get(url)
+    assert unchanged.status_code == 200
+    assert unchanged.json()["owner_reference"] == "OWN-KEEP"
+
+
+def test_create_collateral_audit_includes_owner_reference(client):
+    org_id = make_org(client)
+
+    response = client.post(
+        f"/api/v1/organizations/{org_id}/collaterals",
+        json={
+            **COLLATERAL,
+            "external_ref": "AUDIT-OWNER-001",
+            "owner_reference": "OWN-AUDIT-1",
+        },
+    )
+    assert response.status_code == 201, response.text
+    collateral_id = response.json()["id"]
+
+    with Session(client.test_engine) as db:
+        events = db.scalars(
+            select(AuditLog).where(
+                AuditLog.organization_id == uuid.UUID(org_id),
+                AuditLog.entity_id == collateral_id,
+                AuditLog.action == "collateral.created",
+            )
+        ).all()
+
+        assert len(events) == 1
+        assert events[0].before_data is None
+        assert events[0].after_data["owner_reference"] == "OWN-AUDIT-1"
+
+
+def test_update_collateral_aud
