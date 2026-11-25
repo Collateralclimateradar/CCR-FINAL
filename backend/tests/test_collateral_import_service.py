@@ -1,4 +1,3 @@
-
 import pytest
 
 from ccr.services.collateral_import import (
@@ -26,6 +25,53 @@ def test_valid_csv_returns_valid_records():
     assert result.preview.invalid_rows == 0
     assert len(result.valid_records) == 2
     assert result.valid_records[0]["external_ref"] == "COL-001"
+
+
+def test_owner_reference_is_accepted_and_normalized():
+    content = csv_bytes(
+        "external_ref,property_type,is_synthetic,owner_reference\n"
+        "COL-001,villa,true,  OWN-1001  \n"
+    )
+
+    result = validate_collateral_csv(content)
+
+    assert result.preview.valid_rows == 1
+    assert result.preview.invalid_rows == 0
+    assert result.valid_records[0]["owner_reference"] == "OWN-1001"
+
+
+def test_owner_reference_can_be_blank():
+    content = csv_bytes(
+        "external_ref,property_type,is_synthetic,owner_reference\n"
+        "COL-001,villa,true,\n"
+    )
+
+    result = validate_collateral_csv(content)
+
+    assert result.preview.valid_rows == 1
+    assert result.preview.invalid_rows == 0
+    assert result.valid_records[0]["owner_reference"] is None
+
+
+def test_owner_reference_over_100_characters_is_rejected():
+    content = csv_bytes(
+        "external_ref,property_type,is_synthetic,owner_reference\n"
+        f"COL-001,villa,true,{'R' * 101}\n"
+    )
+
+    result = validate_collateral_csv(content)
+
+    assert result.preview.valid_rows == 0
+    assert result.preview.invalid_rows == 1
+    assert result.valid_records == []
+
+    owner_issues = [
+        issue
+        for issue in result.preview.issues
+        if issue.field == "owner_reference"
+    ]
+
+    assert len(owner_issues) == 1
 
 
 def test_missing_required_header_is_rejected():
