@@ -30,6 +30,7 @@ REQUIRED_HEADERS = {
 
 ALLOWED_HEADERS = {
     "external_ref",
+    "owner_reference",
     "property_type",
     "description",
     "country_code",
