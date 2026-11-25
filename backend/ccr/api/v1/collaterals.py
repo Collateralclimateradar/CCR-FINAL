@@ -198,6 +198,7 @@ def create_collateral(
             entity_id=collateral.id,
             after_data={
                 "external_ref": collateral.external_ref,
+                "owner_reference": collateral.owner_reference,
                 "property_type": collateral.property_type,
                 "country_code": collateral.country_code,
                 "region": collateral.region,
@@ -325,6 +326,7 @@ def update_collateral(
 
     audit_fields = (
         "external_ref",
+        "owner_reference",
         "property_type",
         "country_code",
         "region",
