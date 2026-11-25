@@ -1,4 +1,3 @@
-
 """Tests for executing collateral CSV imports."""
 
 import pytest
@@ -82,6 +81,71 @@ def test_execute_import_saves_valid_records(
     assert report.skipped_rows == 0
     assert report.failed_rows == 0
     assert count_collaterals(db_session, organization.id) == 2
+
+
+def test_execute_import_persists_owner_reference(
+    db_session,
+    organization,
+):
+    content = (
+        b"external_ref,property_type,is_synthetic,owner_reference\n"
+        b"C-OWNER-001,villa,true,OWN-IMPORT-1001\n"
+    )
+
+    preview = preview_csv(content)
+
+    assert preview.preview.valid_rows == 1
+    assert preview.valid_records[0]["owner_reference"] == (
+        "OWN-IMPORT-1001"
+    )
+
+    report = execute_collateral_import(
+        db_session,
+        organization.id,
+        preview,
+    )
+
+    assert report.imported_rows == 1
+    assert report.skipped_rows == 0
+    assert report.failed_rows == 0
+
+    saved = db_session.scalars(
+        select(Collateral).where(
+            Collateral.organization_id == organization.id,
+            Collateral.external_ref == "C-OWNER-001",
+        )
+    ).one()
+
+    assert saved.owner_reference == "OWN-IMPORT-1001"
+
+
+def test_execute_import_saves_null_owner_reference(
+    db_session,
+    organization,
+):
+    content = (
+        b"external_ref,property_type,is_synthetic,owner_reference\n"
+        b"C-OWNER-NULL,villa,true,\n"
+    )
+
+    preview = preview_csv(content)
+
+    report = execute_collateral_import(
+        db_session,
+        organization.id,
+        preview,
+    )
+
+    assert report.imported_rows == 1
+
+    saved = db_session.scalars(
+        select(Collateral).where(
+            Collateral.organization_id == organization.id,
+            Collateral.external_ref == "C-OWNER-NULL",
+        )
+    ).one()
+
+    assert saved.owner_reference is None
 
 
 def test_execute_import_skips_invalid_rows(
