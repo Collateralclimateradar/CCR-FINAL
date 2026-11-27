@@ -1,3 +1,4 @@
+
 """API tests for authenticated collateral CSV preview uploads."""
 
 import uuid
@@ -12,7 +13,7 @@ from ccr.core.security import hash_password
 from ccr.db.base import Base
 from ccr.db.session import get_db
 from ccr.main import app
-from ccr.models import Collateral, Organization, User
+from ccr.models import AuditLog, Collateral, Organization, User
 
 
 def create_test_engine():
@@ -507,6 +508,8 @@ def test_api_import_persists_owner_reference_and_blank_as_null():
             )
     finally:
         cleanup_test_app(engine)
+
+
 def test_api_import_skips_existing_external_ref_without_overwriting():
     client, engine = setup_test_app()
 
@@ -589,6 +592,57 @@ def test_api_import_skips_existing_external_ref_without_overwriting():
 
             # Exactly two records: the original and the new one.
             assert len(by_external_ref) == 2
+
+    finally:
+        cleanup_test_app(engine)
+
+
+def test_api_import_records_audit_event_with_import_counts():
+    client, engine = setup_test_app()
+
+    try:
+        with client:
+            organization_id, headers = create_organization(client)
+            organization_uuid = uuid.UUID(organization_id)
+
+            csv_content = (
+                b"external_ref,property_type,is_synthetic\n"
+                b"C-AUDIT-IMPORT-001,villa,true\n"
+            )
+
+            response = upload_csv(
+                client,
+                import_url(organization_id),
+                csv_content,
+                headers,
+            )
+
+            assert response.status_code == 200, response.text
+
+            report = response.json()
+
+            assert report["imported_rows"] == 1
+            assert report["skipped_rows"] == 0
+            assert report["failed_rows"] == 0
+
+            with Session(engine) as session:
+                events = session.scalars(
+                    select(AuditLog).where(
+                        AuditLog.organization_id == organization_uuid,
+                        AuditLog.action == "collateral.imported",
+                        AuditLog.entity_type == "collateral_import",
+                    )
+                ).all()
+
+            assert len(events) == 1
+
+            event = events[0]
+
+            assert event.actor_user_id is not None
+            assert event.after_data["total_rows"] == 1
+            assert event.after_data["imported_rows"] == 1
+            assert event.after_data["skipped_rows"] == 0
+            assert event.after_data["failed_rows"] == 0
 
     finally:
         cleanup_test_app(engine)
