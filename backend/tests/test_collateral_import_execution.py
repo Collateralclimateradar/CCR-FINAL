@@ -1,14 +1,16 @@
+
 """Tests for executing collateral CSV imports."""
 
 import pytest
-from sqlalchemy import create_engine, select
+from sqlalchemy import create_engine, func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from sqlalchemy.pool import StaticPool
 
 import ccr.models  # noqa: F401
+import ccr.services.collateral_import_execution as collateral_import_execution
 from ccr.db.base import Base
-from ccr.models import Collateral, Organization
+from ccr.models import AuditLog, Collateral, Organization
 from ccr.services.collateral_import import validate_collateral_csv
 from ccr.services.collateral_import_execution import (
     CollateralImportConflict,
@@ -323,3 +325,48 @@ def test_execute_import_rolls_back_on_integrity_error(
         )
 
     assert count_collaterals(db_session, organization.id) == 0
+
+
+def test_execute_import_rolls_back_when_audit_recording_fails(
+    db_session,
+    organization,
+    monkeypatch,
+):
+    """No collateral may persist if recording its audit event fails."""
+    content = make_csv(
+        "C-AUDIT-FAIL-001,villa,true",
+        "C-AUDIT-FAIL-002,apartment,false",
+    )
+    preview = preview_csv(content)
+
+    def fail_audit_recording(*args, **kwargs):
+        raise RuntimeError("Simulated audit recording failure.")
+
+    monkeypatch.setattr(
+        collateral_import_execution,
+        "record_audit_event",
+        fail_audit_recording,
+    )
+
+    with pytest.raises(
+        RuntimeError,
+        match="Simulated audit recording failure.",
+    ):
+        execute_collateral_import(
+            db_session,
+            organization.id,
+            preview,
+        )
+
+    # The collateral inserts must be rolled back.
+    assert count_collaterals(db_session, organization.id) == 0
+
+    # No audit event may remain from the failed transaction.
+    audit_count = db_session.scalar(
+        select(func.count()).select_from(AuditLog).where(
+            AuditLog.organization_id == organization.id,
+            AuditLog.action == "collateral.imported",
+        )
+    )
+
+    assert audit_count == 0
