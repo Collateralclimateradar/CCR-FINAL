@@ -117,6 +117,16 @@ class ThinkHazardProvider(ClimateDataProvider):
                 "ThinkHazard returned an invalid response."
             ) from exc
 
+        if division.admin2:
+            administrative_area = division.name
+            administrative_level = "admin2"
+        elif division.admin1:
+            administrative_area = division.admin1
+            administrative_level = "admin1"
+        else:
+            administrative_area = division.name
+            administrative_level = "provider_division"
+
         try:
             return normalize_thinkhazard_results(
                 payload,
@@ -124,6 +134,8 @@ class ThinkHazardProvider(ClimateDataProvider):
                 latitude=lat,
                 longitude=lon,
                 hazards=hazards,
+                administrative_area=administrative_area,
+                administrative_level=administrative_level,
             )
         except ThinkHazardNormalizationError as exc:
             raise ClimateDataValidationError(
