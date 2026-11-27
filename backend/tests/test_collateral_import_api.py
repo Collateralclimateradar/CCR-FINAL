@@ -605,6 +605,13 @@ def test_api_import_records_audit_event_with_import_counts():
             organization_id, headers = create_organization(client)
             organization_uuid = uuid.UUID(organization_id)
 
+            me_response = client.get(
+                "/api/v1/auth/me",
+                headers=headers,
+            )
+            assert me_response.status_code == 200, me_response.text
+            actor_id = uuid.UUID(me_response.json()["id"])
+
             csv_content = (
                 b"external_ref,property_type,is_synthetic\n"
                 b"C-AUDIT-IMPORT-001,villa,true\n"
@@ -638,7 +645,7 @@ def test_api_import_records_audit_event_with_import_counts():
 
             event = events[0]
 
-            assert event.actor_user_id is not None
+            assert event.actor_user_id == actor_id
             assert event.after_data["total_rows"] == 1
             assert event.after_data["imported_rows"] == 1
             assert event.after_data["skipped_rows"] == 0
