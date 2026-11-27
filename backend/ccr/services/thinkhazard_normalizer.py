@@ -74,16 +74,13 @@ def normalize_thinkhazard_results(
     longitude: float,
     retrieved_at: datetime | None = None,
     hazards: tuple[ClimateHazard, ...] | None = None,
+    administrative_area: str | None = None,
+    administrative_level: str | None = None,
 ) -> list[ClimateHazardResult]:
-    """Convert ThinkHazard's all-hazards response to CCR results.
+    """Convert ThinkHazard classifications into explicitly scoped results.
 
-    River flood and urban flood are combined into one flood result.
-    If both are present, the higher classification is retained.
-    Unsupported hazard types are ignored.
-
-    ThinkHazard's Very Low classification is represented as LOW because
-    CCR's normalized contract does not have a VERY_LOW level. The original
-    classification is preserved in raw_category.
+    ThinkHazard classifications are administrative-area screening results.
+    They must not be interpreted as property-level determinations.
     """
 
     code = _validate_division_code(division_code)
@@ -105,6 +102,23 @@ def normalize_thinkhazard_results(
         raise ThinkHazardNormalizationError(
             "retrieved_at must be a datetime."
         )
+
+    if (administrative_area is None) != (administrative_level is None):
+        raise ThinkHazardNormalizationError(
+            "Administrative area and level must be provided together."
+        )
+
+    if administrative_area is not None:
+        if not isinstance(administrative_area, str) or not administrative_area.strip():
+            raise ThinkHazardNormalizationError(
+                "administrative_area must be a non-empty string."
+            )
+
+    if administrative_level is not None:
+        if not isinstance(administrative_level, str) or not administrative_level.strip():
+            raise ThinkHazardNormalizationError(
+                "administrative_level must be a non-empty string."
+            )
 
     if hazards is None:
         requested_hazards = set(ClimateHazard)
@@ -195,6 +209,13 @@ def normalize_thinkhazard_results(
                 f"https://thinkhazard.org/en/report/"
                 f"{code}/{','.join(data['mnemonics'])}"
             ),
+            assessment_scope=(
+                "administrative_area"
+                if administrative_area is not None
+                else "unspecified"
+            ),
+            administrative_area=administrative_area,
+            administrative_level=administrative_level,
         )
 
         results.append(validate_provider_result(result))
