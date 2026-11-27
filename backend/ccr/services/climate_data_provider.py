@@ -40,7 +40,7 @@ class ClimateDataValidationError(ClimateDataProviderError):
 
 @dataclass(frozen=True)
 class ClimateHazardResult:
-    """Normalized result returned by a climate data provider."""
+    """Normalized hazard result with explicit geographic assessment scope."""
 
     source: str
     hazard: ClimateHazard
@@ -50,10 +50,13 @@ class ClimateHazardResult:
     longitude: float
     raw_category: str | None = None
     reference_url: str | None = None
+    assessment_scope: str = "unspecified"
+    administrative_area: str | None = None
+    administrative_level: str | None = None
 
 
 class ClimateDataProvider(Protocol):
-    """Interface implemented by external climate data providers."""
+    """Interface implemented by external climate data sources."""
 
     @property
     def name(self) -> str:
@@ -141,5 +144,40 @@ def validate_provider_result(
         raise ClimateDataValidationError(
             "reference_url must be a string or None."
         )
+
+    if result.assessment_scope not in {
+        "unspecified",
+        "point",
+        "administrative_area",
+    }:
+        raise ClimateDataValidationError(
+            "Invalid climate assessment scope."
+        )
+
+    if result.administrative_area is not None and (
+        not isinstance(result.administrative_area, str)
+        or not result.administrative_area.strip()
+    ):
+        raise ClimateDataValidationError(
+            "administrative_area must be a non-empty string or None."
+        )
+
+    if result.administrative_level is not None and (
+        not isinstance(result.administrative_level, str)
+        or not result.administrative_level.strip()
+    ):
+        raise ClimateDataValidationError(
+            "administrative_level must be a non-empty string or None."
+        )
+
+    if result.assessment_scope == "administrative_area":
+        if not result.administrative_area:
+            raise ClimateDataValidationError(
+                "Administrative-area results must identify the area."
+            )
+        if not result.administrative_level:
+            raise ClimateDataValidationError(
+                "Administrative-area results must identify the level."
+            )
 
     return result
