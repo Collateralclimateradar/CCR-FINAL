@@ -8,7 +8,6 @@ from sqlalchemy.orm import Session
 
 from ccr.models.collateral import Collateral
 from ccr.services.climate_data_provider import (
-    ClimateDataProvider,
     ClimateDataValidationError,
     ClimateHazard,
     ClimateHazardResult,
@@ -40,7 +39,7 @@ def screen_collateral_location(
     *,
     organization_id: uuid.UUID,
     collateral_id: uuid.UUID,
-    provider: ClimateDataProvider,
+    provider,
     hazards: tuple[ClimateHazard, ...] = DEFAULT_HAZARDS,
 ) -> list[ClimateHazardResult]:
     """Retrieve provider classifications for an organization's collateral.
@@ -50,8 +49,12 @@ def screen_collateral_location(
     persist assessments, or claim property-level hazard precision.
     """
 
-    if not isinstance(provider, ClimateDataProvider):
-        raise TypeError("provider must implement ClimateDataProvider.")
+    assess_location = getattr(provider, "assess_location", None)
+
+    if not callable(assess_location):
+        raise TypeError(
+            "provider must implement a callable assess_location method."
+        )
 
     if not isinstance(hazards, tuple) or any(
         not isinstance(hazard, ClimateHazard)
@@ -85,7 +88,7 @@ def screen_collateral_location(
             "before climate screening."
         )
 
-    results = provider.assess_location(
+    results = assess_location(
         latitude=float(collateral.latitude),
         longitude=float(collateral.longitude),
         hazards=hazards,
