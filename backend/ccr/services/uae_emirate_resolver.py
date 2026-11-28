@@ -1,9 +1,9 @@
 
-"""Resolve UAE coordinates to ThinkHazard emirate divisions.
+"""Resolve UAE coordinates to ThinkHazard administrative divisions.
 
 Boundary source: UN OCHA Global COD Admin1 ArcGIS Feature Service.
-The service performs the point-in-polygon query; no local boundary file
-or third-party Python package is required.
+ThinkHazard division IDs are sourced from the official
+GFDRR/thinkhazard support_tools/API_parse/ADM1_TH.csv dataset.
 """
 
 import json
@@ -25,15 +25,18 @@ ARCGIS_QUERY_URL = (
 
 REQUEST_TIMEOUT_SECONDS = 15
 
-# ThinkHazard division codes for the seven UAE emirates.
+# Official ThinkHazard ADM1 division IDs for the seven UAE emirates.
+# Source:
+# https://github.com/GFDRR/thinkhazard/blob/master/
+# support_tools/API_parse/ADM1_TH.csv
 THINKHAZARD_CODES = {
-    "abu dhabi": "ARE001",
-    "ajman": "ARE002",
-    "dubai": "ARE003",
-    "fujairah": "ARE004",
-    "ras al khaimah": "ARE005",
-    "sharjah": "ARE006",
-    "umm al quwain": "ARE007",
+    "abu dhabi": 3173,
+    "ajman": 149626,
+    "dubai": 3177,
+    "fujairah": 149627,
+    "ras al khaimah": 3179,
+    "sharjah": 3180,
+    "umm al quwain": 3181,
 }
 
 
@@ -161,7 +164,11 @@ class UAEEmirateResolver:
             )
 
         feature = features[0]
-        attributes = feature.get("attributes") if isinstance(feature, dict) else None
+        attributes = (
+            feature.get("attributes")
+            if isinstance(feature, dict)
+            else None
+        )
 
         if not isinstance(attributes, dict):
             raise UAEEmirateResolverError(
