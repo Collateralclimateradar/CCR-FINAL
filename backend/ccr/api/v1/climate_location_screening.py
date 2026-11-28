@@ -30,6 +30,15 @@ from ccr.services.thinkhazard_provider import ThinkHazardProvider
 from ccr.services.uae_emirate_resolver import UAEEmirateResolver
 
 
+ASSESSMENT_NOTICE = (
+    "This result is an administrative-area climate hazard screening. "
+    "It is not a property-level risk determination, a site-specific "
+    "engineering assessment, or an estimate of financial loss. "
+    "Hazard classifications do not by themselves measure collateral "
+    "exposure, vulnerability, or expected financial impact."
+)
+
+
 router = APIRouter(
     prefix="/organizations/{organization_id}/collaterals",
     tags=["climate-location-screening"],
@@ -67,6 +76,9 @@ class ClimateHazardResultRead(BaseModel):
     longitude: float
     raw_category: str | None
     reference_url: str | None
+    assessment_scope: str
+    administrative_area: str | None
+    administrative_level: str | None
 
 
 class ClimateLocationScreeningRead(BaseModel):
@@ -75,6 +87,7 @@ class ClimateLocationScreeningRead(BaseModel):
     collateral_id: uuid.UUID
     provider: str
     screened_at: datetime
+    assessment_notice: str
     results: list[ClimateHazardResultRead]
 
 
@@ -145,6 +158,9 @@ def screen_collateral_climate_location(
                     hazard.value for hazard in payload.hazards
                 ],
                 "result_count": len(results),
+                "assessment_scopes": sorted(
+                    {result.assessment_scope for result in results}
+                ),
                 "screened_at": screened_at.isoformat(),
             },
         )
@@ -159,6 +175,7 @@ def screen_collateral_climate_location(
         collateral_id=collateral_id,
         provider=provider.name,
         screened_at=screened_at,
+        assessment_notice=ASSESSMENT_NOTICE,
         results=[
             ClimateHazardResultRead(
                 hazard=result.hazard,
@@ -169,6 +186,9 @@ def screen_collateral_climate_location(
                 longitude=result.longitude,
                 raw_category=result.raw_category,
                 reference_url=result.reference_url,
+                assessment_scope=result.assessment_scope,
+                administrative_area=result.administrative_area,
+                administrative_level=result.administrative_level,
             )
             for result in results
         ],
