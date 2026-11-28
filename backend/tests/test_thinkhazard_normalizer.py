@@ -7,7 +7,6 @@ import pytest
 
 from ccr.services.climate_data_provider import (
     ClimateHazard,
-    ClimateDataValidationError,
     HazardLevel,
 )
 from ccr.services.thinkhazard_normalizer import (
@@ -23,7 +22,6 @@ DIVISION_CODE = "ARE002"
 
 def make_payload():
     """Return representative ThinkHazard classifications."""
-
     return [
         {
             "hazardtype": {
@@ -68,12 +66,8 @@ def make_payload():
     ]
 
 
-def normalize(
-    payload=None,
-    **overrides,
-):
+def normalize(payload=None, **overrides):
     """Call the normalizer with standard valid arguments."""
-
     arguments = {
         "division_code": DIVISION_CODE,
         "latitude": LATITUDE,
@@ -206,7 +200,10 @@ def test_preserves_very_low_raw_category():
         }
     ]
 
-    results = normalize(payload)
+    results = normalize(
+        payload,
+        hazards=(ClimateHazard.FLOOD,),
+    )
 
     assert len(results) == 1
     assert results[0].level == HazardLevel.LOW
@@ -221,7 +218,10 @@ def test_uses_level_mnemonic_when_title_is_missing():
         }
     ]
 
-    results = normalize(payload)
+    results = normalize(
+        payload,
+        hazards=(ClimateHazard.FLOOD,),
+    )
 
     assert results[0].raw_category == "HIG"
 
@@ -237,11 +237,24 @@ def test_ignores_unsupported_hazard_types():
         }
     ]
 
-    assert normalize(payload) == []
+    assert normalize(payload, hazards=()) == []
 
 
-def test_returns_empty_list_for_empty_payload():
-    assert normalize([]) == []
+def test_returns_empty_list_when_no_hazards_are_requested():
+    assert normalize([], hazards=()) == []
+
+
+def test_returns_unknown_for_missing_requested_hazards():
+    results = normalize(
+        [],
+        hazards=(ClimateHazard.FLOOD,),
+    )
+
+    assert len(results) == 1
+    assert results[0].hazard == ClimateHazard.FLOOD
+    assert results[0].level == HazardLevel.UNKNOWN
+    assert results[0].raw_category == "Not reported by ThinkHazard"
+    assert results[0].reference_url is None
 
 
 @pytest.mark.parametrize(
