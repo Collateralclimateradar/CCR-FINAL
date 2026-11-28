@@ -131,6 +131,76 @@ def test_get_all_hazards_returns_valid_payload(
     assert timeout == 7
 
 
+@pytest.mark.parametrize(
+    "division_code",
+    [
+        3173,
+        149626,
+        3177,
+        149627,
+        3179,
+        3180,
+        3181,
+    ],
+)
+def test_official_uae_emirate_codes_are_used_in_report_url(
+    client,
+    monkeypatch,
+    division_code,
+):
+    payload = [
+        {
+            "hazardtype": {"mnemonic": "FL", "name": "River Flood"},
+            "hazardlevel": {"mnemonic": "HIG", "name": "High"},
+        }
+    ]
+    calls = mock_json_response(monkeypatch, payload)
+
+    result = client.get_all_hazards(division_code)
+
+    assert result == payload
+    assert len(calls) == 1
+
+    request, _ = calls[0]
+    assert request.full_url == (
+        f"https://example.test/en/report/{division_code}.json"
+    )
+
+
+@pytest.mark.parametrize(
+    "division_code",
+    [
+        3173,
+        149626,
+        3177,
+        149627,
+        3179,
+        3180,
+        3181,
+    ],
+)
+def test_official_uae_emirate_codes_are_used_in_hazard_report_url(
+    client,
+    monkeypatch,
+    division_code,
+):
+    payload = {
+        "hazard_category": {
+            "hazard_level": "High",
+        },
+        "sources": [],
+    }
+    calls = mock_json_response(monkeypatch, payload)
+
+    result = client.get_hazard_report(division_code, "FL")
+
+    assert result == payload
+    request, _ = calls[0]
+    assert request.full_url == (
+        f"https://example.test/en/report/{division_code}/FL.json"
+    )
+
+
 def test_get_hazard_report_returns_valid_payload(
     client,
     monkeypatch,
@@ -182,10 +252,18 @@ def test_get_divisions_for_hazard_returns_valid_payload(
         [{"hazardtype": {}, "hazardlevel": {}}],
         [{"hazardtype": {"mnemonic": "FL"}}],
         [{"hazardlevel": {"mnemonic": "H"}}],
-        [{"hazardtype": {"mnemonic": 123},
-          "hazardlevel": {"mnemonic": "H"}}],
-        [{"hazardtype": {"mnemonic": "FL"},
-          "hazardlevel": {"mnemonic": None}}],
+        [
+            {
+                "hazardtype": {"mnemonic": 123},
+                "hazardlevel": {"mnemonic": "H"},
+            }
+        ],
+        [
+            {
+                "hazardtype": {"mnemonic": "FL"},
+                "hazardlevel": {"mnemonic": None},
+            }
+        ],
     ],
 )
 def test_get_all_hazards_rejects_invalid_payload(
@@ -252,7 +330,11 @@ def test_client_rejects_non_200_response(
     client,
     monkeypatch,
 ):
-    mock_json_response(monkeypatch, {"error": "Unavailable"}, status=503)
+    mock_json_response(
+        monkeypatch,
+        {"error": "Unavailable"},
+        status=503,
+    )
 
     with pytest.raises(
         ThinkHazardUnavailableError,
