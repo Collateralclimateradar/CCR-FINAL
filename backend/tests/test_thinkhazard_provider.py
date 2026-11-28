@@ -169,6 +169,43 @@ def test_returns_normalized_results(
     assert resolver.calls == [(LATITUDE, LONGITUDE)]
 
 
+def test_passes_administrative_area_metadata_to_results(
+    client,
+    monkeypatch,
+):
+    resolver = FakeDivisionResolver(
+        result=AdministrativeDivision(
+            code=DIVISION_CODE,
+            name="Ajman",
+            country="United Arab Emirates",
+            admin1="Ajman",
+            admin2=None,
+        )
+    )
+
+    monkeypatch.setattr(
+        client,
+        "get_all_hazards",
+        lambda code: flood_payload(),
+    )
+
+    provider = make_provider(client, resolver)
+
+    results = provider.assess_location(
+        latitude=LATITUDE,
+        longitude=LONGITUDE,
+        hazards=(ClimateHazard.FLOOD,),
+    )
+
+    assert len(results) == 1
+
+    result = results[0]
+
+    assert result.assessment_scope == "administrative_area"
+    assert result.administrative_area == "Ajman"
+    assert result.administrative_level == "admin1"
+
+
 def test_requests_only_selected_hazards(
     client,
     resolver,
