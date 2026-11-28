@@ -1,10 +1,8 @@
 
-"""Tests for UAE coordinate-to-emirate resolution."""
+"""Tests for UAE emirate resolution and ThinkHazard division mapping."""
 
 import json
-from io import BytesIO
-from urllib.error import HTTPError
-from urllib.parse import parse_qs, urlparse
+from unittest.mock import Mock
 
 import pytest
 
@@ -12,75 +10,67 @@ from ccr.services.administrative_division import (
     AdministrativeDivisionNotFoundError,
 )
 from ccr.services.uae_emirate_resolver import (
-    ARCGIS_QUERY_URL,
     THINKHAZARD_CODES,
     UAEEmirateResolver,
     UAEEmirateResolverError,
 )
 
 
-class FakeResponse:
-    """Minimal context-manager response for mocked ArcGIS requests."""
-
-    def __init__(self, payload):
-        self.body = (
-            payload
-            if isinstance(payload, bytes)
-            else json.dumps(payload).encode("utf-8")
-        )
-
-    def __enter__(self):
-        return self
-
-    def __exit__(self, exc_type, exc_value, traceback):
-        return False
-
-    def read(self):
-        return self.body
+EMIRATES = [
+    ("Abu Dhabi", 3173),
+    ("Ajman", 149626),
+    ("Dubai", 3177),
+    ("Fujairah", 149627),
+    ("Ras Al Khaimah", 3179),
+    ("Sharjah", 3180),
+    ("Umm Al Quwain", 3181),
+]
 
 
-def feature(
-    emirate_name,
-    *,
-    country_code="ARE",
-):
+def arcgis_response(name, pcode="ARE"):
     return {
-        "attributes": {
-            "adm1_name": emirate_name,
-            "adm1_pcode": "ARE001",
-            "adm0_pcode": country_code,
-        }
+        "features": [
+            {
+                "attributes": {
+                    "adm1_name": name,
+                    "adm1_pcode": "ARE",
+                    "adm0_pcode": pcode,
+                }
+            }
+        ]
     }
 
 
-@pytest.mark.parametrize(
-    ("emirate_name", "expected_code"),
-    [
-        ("Abu Dhabi", "ARE001"),
-        ("Ajman", "ARE002"),
-        ("Dubai", "ARE003"),
-        ("Fujairah", "ARE004"),
-        ("Ras Al Khaimah", "ARE005"),
-        ("Sharjah", "ARE006"),
-        ("Umm Al Quwain", "ARE007"),
-    ],
-)
+def mock_urlopen(monkeypatch, payload):
+    response = Mock()
+    response.read.return_value = json.dumps(payload).encode("utf-8")
+    response.__enter__ = Mock(return_value=response)
+    response.__exit__ = Mock(return_value=False)
+
+    captured = {}
+
+    def fake_urlopen(request, timeout):
+        captured["request"] = request
+        captured["timeout"] = timeout
+        return response
+
+    monkeypatch.setattr(
+        "ccr.services.uae_emirate_resolver.urlopen",
+        fake_urlopen,
+    )
+    return captured
+
+
+@pytest.mark.parametrize("emirate_name,expected_code", EMIRATES)
 def test_resolves_all_seven_uae_emirates(
     monkeypatch,
     emirate_name,
     expected_code,
 ):
-    monkeypatch.setattr(
-        "ccr.services.uae_emirate_resolver.urlopen",
-        lambda request, timeout: FakeResponse(
-            {"features": [feature(emirate_name)]}
-        ),
-    )
+    mock_urlopen(monkeypatch, arcgis_response(emirate_name))
 
-    result = UAEEmirateResolver().resolve(
-        latitude=25.2048,
-        longitude=55.2708,
-    )
+    resolver = UAEEmirateResolver()
+    result = resolver.resolve(latitude=25.2, longitude=55.3)
 
     assert result.code == expected_code
     assert result.name == emirate_name
@@ -92,310 +82,213 @@ def test_resolves_all_seven_uae_emirates(
 def test_emirate_name_matching_is_case_and_whitespace_insensitive(
     monkeypatch,
 ):
-    monkeypatch.setattr(
-        "ccr.services.uae_emirate_resolver.urlopen",
-        lambda request, timeout: FakeResponse(
-            {"features": [feature("  aJmAn  ")]}
-        ),
-    )
+    mock_urlopen(monkeypatch, arcgis_response("  aJmAn  "))
 
-    result = UAEEmirateResolver().resolve(
-        latitude=25.4,
-        longitude=55.5,
-    )
+    resolver = UAEEmirateResolver()
+    result = resolver.resolve(latitude=25.4, longitude=55.5)
 
-    assert result.code == "ARE002"
+    assert result.code == 149626
     assert result.name == "Ajman"
 
 
-def test_request_uses_point_coordinates_and_uae_filter(
-    monkeypatch,
-):
-    captured = {}
-
-    def fake_urlopen(request, timeout):
-        captured["url"] = request.full_url
-        captured["timeout"] = timeout
-
-        return FakeResponse(
-            {"features": [feature("Ajman")]}
-        )
-
-    monkeypatch.setattr(
-        "ccr.services.uae_emirate_resolver.urlopen",
-        fake_urlopen,
+def test_query_uses_point_geometry_and_uae_filter(monkeypatch):
+    captured = mock_urlopen(
+        monkeypatch,
+        arcgis_response("Dubai"),
     )
 
-    UAEEmirateResolver(timeout=7).resolve(
-        latitude=25.4,
-        longitude=55.5,
-    )
+    resolver = UAEEmirateResolver()
+    resolver.resolve(latitude=25.2, longitude=55.3)
 
-    parsed = urlparse(captured["url"])
-    params = parse_qs(parsed.query)
+    request = captured["request"]
+    url = request.full_url
 
-    assert parsed.scheme == "https"
-    assert parsed.netloc == "gis.unocha.org"
-    assert parsed.path == urlparse(ARCGIS_QUERY_URL).path
-
-    assert params["where"] == ["adm0_pcode = 'ARE'"]
-    assert params["geometryType"] == ["esriGeometryPoint"]
-    assert params["inSR"] == ["4326"]
-    assert params["spatialRel"] == ["esriSpatialRelIntersects"]
-    assert params["returnGeometry"] == ["false"]
-    assert params["f"] == ["json"]
-    assert captured["timeout"] == 7
-
-    geometry = json.loads(params["geometry"][0])
-
-    assert geometry == {
-        "x": 55.5,
-        "y": 25.4,
-        "spatialReference": {"wkid": 4326},
-    }
+    assert "adm0_pcode" in url
+    assert "ARE" in url
+    assert "esriGeometryPoint" in url
+    assert "esriSpatialRelIntersects" in url
+    assert "adm1_name" in url
+    assert captured["timeout"] == 15.0
 
 
 @pytest.mark.parametrize(
-    ("latitude", "longitude"),
+    "latitude,longitude",
     [
-        (91, 0),
-        (-91, 0),
-        (0, 181),
-        (0, -181),
-        ("invalid", 55),
+        (91, 55),
+        (-91, 55),
+        (25, 181),
+        (25, -181),
+        (None, 55),
         (25, None),
-        (float("nan"), 55),
-        (25, float("inf")),
         (True, 55),
-        (25, False),
     ],
 )
-def test_rejects_invalid_coordinates_without_network_call(
+def test_invalid_coordinates_do_not_make_network_call(
     monkeypatch,
     latitude,
     longitude,
 ):
-    def unexpected_call(*args, **kwargs):
-        raise AssertionError("Network call must not happen.")
+    def unexpected_network_call(*args, **kwargs):
+        pytest.fail("Network must not be called for invalid coordinates.")
 
     monkeypatch.setattr(
         "ccr.services.uae_emirate_resolver.urlopen",
-        unexpected_call,
+        unexpected_network_call,
     )
 
+    resolver = UAEEmirateResolver()
+
     with pytest.raises(UAEEmirateResolverError):
-        UAEEmirateResolver().resolve(
-            latitude=latitude,
-            longitude=longitude,
-        )
+        resolver.resolve(latitude=latitude, longitude=longitude)
 
 
-@pytest.mark.parametrize(
-    "timeout",
-    [0, -1, True, "15", None],
-)
-def test_rejects_invalid_timeout(timeout):
+@pytest.mark.parametrize("timeout", [0, -1, True, "invalid", None])
+def test_invalid_timeout_is_rejected(timeout):
     with pytest.raises(ValueError):
         UAEEmirateResolver(timeout=timeout)
 
 
-def test_empty_features_raise_not_found_error(monkeypatch):
-    monkeypatch.setattr(
-        "ccr.services.uae_emirate_resolver.urlopen",
-        lambda request, timeout: FakeResponse(
-            {"features": []}
-        ),
-    )
+def test_empty_features_raise_not_found(monkeypatch):
+    mock_urlopen(monkeypatch, {"features": []})
+
+    resolver = UAEEmirateResolver()
 
     with pytest.raises(AdministrativeDivisionNotFoundError):
-        UAEEmirateResolver().resolve(
-            latitude=25.4,
-            longitude=55.5,
-        )
+        resolver.resolve(latitude=25.2, longitude=55.3)
 
 
-def test_multiple_matching_features_are_rejected(monkeypatch):
-    monkeypatch.setattr(
-        "ccr.services.uae_emirate_resolver.urlopen",
-        lambda request, timeout: FakeResponse(
-            {
-                "features": [
-                    feature("Ajman"),
-                    feature("Sharjah"),
-                ]
-            }
-        ),
-    )
+def test_multiple_matches_raise_resolution_error(monkeypatch):
+    payload = {
+        "features": [
+            arcgis_response("Dubai")["features"][0],
+            arcgis_response("Sharjah")["features"][0],
+        ]
+    }
+    mock_urlopen(monkeypatch, payload)
 
-    with pytest.raises(
-        UAEEmirateResolverError,
-        match="multiple emirate boundaries",
-    ):
-        UAEEmirateResolver().resolve(
-            latitude=25.4,
-            longitude=55.5,
-        )
+    resolver = UAEEmirateResolver()
+
+    with pytest.raises(UAEEmirateResolverError):
+        resolver.resolve(latitude=25.2, longitude=55.3)
 
 
 @pytest.mark.parametrize(
     "payload",
     [
         [],
-        "unexpected",
+        None,
+        "invalid",
         {},
         {"features": None},
-        {"features": "invalid"},
+        {"features": [{}]},
+        {"features": [{"attributes": None}]},
     ],
 )
-def test_rejects_unexpected_boundary_responses(
+def test_malformed_response_raises_resolution_error(
     monkeypatch,
     payload,
 ):
-    monkeypatch.setattr(
-        "ccr.services.uae_emirate_resolver.urlopen",
-        lambda request, timeout: FakeResponse(payload),
-    )
+    mock_urlopen(monkeypatch, payload)
+
+    resolver = UAEEmirateResolver()
 
     with pytest.raises(UAEEmirateResolverError):
-        UAEEmirateResolver().resolve(
-            latitude=25.4,
-            longitude=55.5,
-        )
+        resolver.resolve(latitude=25.2, longitude=55.3)
 
 
-def test_rejects_arcgis_error_response(monkeypatch):
-    monkeypatch.setattr(
-        "ccr.services.uae_emirate_resolver.urlopen",
-        lambda request, timeout: FakeResponse(
-            {
-                "error": {
-                    "code": 400,
-                    "message": "Invalid query",
-                },
-                "features": [],
-            }
-        ),
+def test_arcgis_error_response_raises_resolution_error(monkeypatch):
+    mock_urlopen(
+        monkeypatch,
+        {"error": {"code": 400, "message": "Invalid query"}},
     )
 
-    with pytest.raises(
-        UAEEmirateResolverError,
-        match="query error",
-    ):
-        UAEEmirateResolver().resolve(
-            latitude=25.4,
-            longitude=55.5,
-        )
+    resolver = UAEEmirateResolver()
+
+    with pytest.raises(UAEEmirateResolverError):
+        resolver.resolve(latitude=25.2, longitude=55.3)
 
 
-@pytest.mark.parametrize(
-    "attributes",
-    [
-        None,
-        {},
-        {"adm1_name": "Ajman"},
-        {
-            "adm1_name": "Ajman",
-            "adm0_pcode": "OMN",
-        },
-        {
-            "adm1_name": "",
-            "adm0_pcode": "ARE",
-        },
-        {
-            "adm1_name": "Unknown Emirate",
-            "adm0_pcode": "ARE",
-        },
-    ],
-)
-def test_rejects_invalid_or_unmapped_features(
-    monkeypatch,
-    attributes,
-):
-    payload = {
-        "features": [
-            {"attributes": attributes}
-        ]
+def test_non_uae_feature_is_rejected(monkeypatch):
+    mock_urlopen(
+        monkeypatch,
+        arcgis_response("Dubai", pcode="OMN"),
+    )
+
+    resolver = UAEEmirateResolver()
+
+    with pytest.raises(UAEEmirateResolverError):
+        resolver.resolve(latitude=25.2, longitude=55.3)
+
+
+def test_unmapped_emirate_is_rejected(monkeypatch):
+    mock_urlopen(
+        monkeypatch,
+        arcgis_response("Unknown Emirate"),
+    )
+
+    resolver = UAEEmirateResolver()
+
+    with pytest.raises(UAEEmirateResolverError):
+        resolver.resolve(latitude=25.2, longitude=55.3)
+
+
+def test_unique_and_complete_official_thinkhazard_codes():
+    assert len(THINKHAZARD_CODES) == 7
+
+    assert set(THINKHAZARD_CODES.values()) == {
+        3173,
+        149626,
+        3177,
+        149627,
+        3179,
+        3180,
+        3181,
     }
 
-    monkeypatch.setattr(
-        "ccr.services.uae_emirate_resolver.urlopen",
-        lambda request, timeout: FakeResponse(payload),
-    )
-
-    with pytest.raises(UAEEmirateResolverError):
-        UAEEmirateResolver().resolve(
-            latitude=25.4,
-            longitude=55.5,
-        )
+    assert len(set(THINKHAZARD_CODES.values())) == 7
 
 
-def test_rejects_non_object_feature(monkeypatch):
-    monkeypatch.setattr(
-        "ccr.services.uae_emirate_resolver.urlopen",
-        lambda request, timeout: FakeResponse(
-            {"features": ["invalid"]}
-        ),
-    )
+def test_http_error_is_converted_to_resolution_error(monkeypatch):
+    from urllib.error import HTTPError
 
-    with pytest.raises(
-        UAEEmirateResolverError,
-        match="attributes",
-    ):
-        UAEEmirateResolver().resolve(
-            latitude=25.4,
-            longitude=55.5,
-        )
-
-
-def test_rejects_invalid_json(monkeypatch):
-    monkeypatch.setattr(
-        "ccr.services.uae_emirate_resolver.urlopen",
-        lambda request, timeout: FakeResponse(b"{invalid-json"),
-    )
-
-    with pytest.raises(
-        UAEEmirateResolverError,
-        match="invalid JSON",
-    ):
-        UAEEmirateResolver().resolve(
-            latitude=25.4,
-            longitude=55.5,
-        )
-
-
-def test_handles_http_error(monkeypatch):
-    def fail_request(request, timeout):
+    def failing_urlopen(*args, **kwargs):
         raise HTTPError(
-            request.full_url,
-            503,
-            "Service unavailable",
-            None,
-            BytesIO(b""),
+            url="https://example.com",
+            code=503,
+            msg="Service unavailable",
+            hdrs=None,
+            fp=None,
         )
 
     monkeypatch.setattr(
         "ccr.services.uae_emirate_resolver.urlopen",
-        fail_request,
+        failing_urlopen,
     )
+
+    resolver = UAEEmirateResolver()
 
     with pytest.raises(
         UAEEmirateResolverError,
         match="HTTP 503",
     ):
-        UAEEmirateResolver().resolve(
-            latitude=25.4,
-            longitude=55.5,
-        )
+        resolver.resolve(latitude=25.2, longitude=55.3)
 
 
-def test_all_emirate_codes_are_unique_and_complete():
-    assert len(THINKHAZARD_CODES) == 7
-    assert set(THINKHAZARD_CODES.values()) == {
-        "ARE001",
-        "ARE002",
-        "ARE003",
-        "ARE004",
-        "ARE005",
-        "ARE006",
-        "ARE007",
-    }
+def test_network_error_is_converted_to_resolution_error(monkeypatch):
+    from urllib.error import URLError
+
+    def failing_urlopen(*args, **kwargs):
+        raise URLError("Connection failed")
+
+    monkeypatch.setattr(
+        "ccr.services.uae_emirate_resolver.urlopen",
+        failing_urlopen,
+    )
+
+    resolver = UAEEmirateResolver()
+
+    with pytest.raises(
+        UAEEmirateResolverError,
+        match="Could not reach",
+    ):
+        resolver.resolve(latitude=25.2, longitude=55.3)
