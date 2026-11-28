@@ -13,6 +13,7 @@ from sqlalchemy.pool import StaticPool
 
 import ccr.models  # noqa: F401
 from ccr.api.v1.climate_location_screening import (
+    ASSESSMENT_NOTICE,
     get_climate_data_provider,
 )
 from ccr.core.security import hash_password
@@ -55,6 +56,9 @@ class FakeClimateProvider:
                 longitude=longitude,
                 raw_category="High",
                 reference_url="https://example.com/climate-source",
+                assessment_scope="administrative_area",
+                administrative_area="Dubai",
+                administrative_level="admin1",
             )
         ]
 
@@ -237,10 +241,19 @@ def test_authenticated_user_can_screen_own_collateral_and_audit_is_recorded(
     data = response.json()
     assert data["collateral_id"] == collateral_id
     assert data["provider"] == "test-climate-provider"
+    assert data["assessment_notice"] == ASSESSMENT_NOTICE
+
     assert len(data["results"]) == 1
-    assert data["results"][0]["hazard"] == "flood"
-    assert data["results"][0]["level"] == "high"
-    assert data["results"][0]["source"] == "test-climate-provider"
+
+    result = data["results"][0]
+
+    assert result["hazard"] == "flood"
+    assert result["level"] == "high"
+    assert result["source"] == "test-climate-provider"
+
+    assert result["assessment_scope"] == "administrative_area"
+    assert result["administrative_area"] == "Dubai"
+    assert result["administrative_level"] == "admin1"
 
     assert climate_location_client.test_provider.calls == [
         {
@@ -268,6 +281,9 @@ def test_authenticated_user_can_screen_own_collateral_and_audit_is_recorded(
         assert events[0].after_data["result_count"] == 1
         assert events[0].after_data["hazards_requested"] == [
             "flood"
+        ]
+        assert events[0].after_data["assessment_scopes"] == [
+            "administrative_area"
         ]
 
 
