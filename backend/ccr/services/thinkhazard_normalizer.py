@@ -80,7 +80,7 @@ def normalize_thinkhazard_results(
     """Convert ThinkHazard classifications into explicitly scoped results.
 
     ThinkHazard classifications are administrative-area screening results.
-    They must not be interpreted as property-level determinations.
+    Missing requested hazards are represented as UNKNOWN, never as no risk.
     """
 
     code = _validate_division_code(division_code)
@@ -194,9 +194,27 @@ def normalize_thinkhazard_results(
         elif mnemonic not in current["mnemonics"]:
             current["mnemonics"].append(mnemonic)
 
+    # A missing source classification is unknown, not evidence of low risk.
+    for hazard in ClimateHazard:
+        if hazard in requested_hazards and hazard not in aggregated:
+            aggregated[hazard] = {
+                "level": HazardLevel.UNKNOWN,
+                "raw_category": "Not reported by ThinkHazard",
+                "mnemonics": [],
+            }
+
     results = []
 
     for hazard, data in aggregated.items():
+        mnemonics = data["mnemonics"]
+
+        reference_url = (
+            f"https://thinkhazard.org/en/report/"
+            f"{code}/{','.join(mnemonics)}"
+            if mnemonics
+            else None
+        )
+
         result = ClimateHazardResult(
             source=SOURCE_NAME,
             hazard=hazard,
@@ -205,10 +223,7 @@ def normalize_thinkhazard_results(
             latitude=lat,
             longitude=lon,
             raw_category=data["raw_category"],
-            reference_url=(
-                f"https://thinkhazard.org/en/report/"
-                f"{code}/{','.join(data['mnemonics'])}"
-            ),
+            reference_url=reference_url,
             assessment_scope=(
                 "administrative_area"
                 if administrative_area is not None
